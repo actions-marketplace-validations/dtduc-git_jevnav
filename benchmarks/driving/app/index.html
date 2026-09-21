@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Ops — sign in</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #0f1420; color: #e7ecf6; }
+  main { max-width: 680px; margin: 40px auto; padding: 0 16px; }
+  fieldset { border: 1px solid #2a3446; border-radius: 8px; padding: 16px; }
+  label { display: block; margin: 10px 0 4px; font-size: 14px; }
+  input, select, button { font: inherit; padding: 8px; border-radius: 6px; border: 1px solid #2a3446;
+    background: #141b29; color: inherit; }
+  button { cursor: pointer; }
+  #toast { margin: 12px 0; padding: 10px 12px; border-radius: 6px; background: #1c2b1f;
+    border: 1px solid #2f6b3f; min-height: 18px; }
+  .tabs { display: flex; gap: 8px; margin: 16px 0; }
+  .tabs button[aria-selected="true"] { background: #24314a; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 8px 6px; border-bottom: 1px solid #223; }
+  tr.archived td { opacity: .45; }
+  iframe { width: 100%; height: 160px; border: 1px solid #2a3446; border-radius: 8px; background: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Acme Ops</h1>
+
+  <form id="login" onsubmit="return false">
+    <fieldset>
+      <legend>Sign in</legend>
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="you@example.com">
+      <label for="password">Password</label>
+      <input id="password" type="password">
+      <button id="signin" type="submit">Sign in</button>
+    </fieldset>
+  </form>
+
+  <section id="dashboard" style="display:none">
+    <p>Signed in as <strong id="who"></strong></p>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-tasks" aria-selected="true">Tasks</button>
+      <button role="tab" id="tab-payment" aria-selected="false">Payment</button>
+    </div>
+    <div id="toast"></div>
+
+    <div id="panel-tasks">
+      <table>
+        <tbody id="rows">
+          <tr id="row-1"><td>Release notes</td><td><button data-row="row-1" aria-label="Archive Release notes">Archive</button></td></tr>
+          <tr id="row-2"><td>Renew TLS certificate</td><td><button data-row="row-2" aria-label="Archive Renew TLS certificate">Archive</button></td></tr>
+          <tr id="row-3"><td>Reply to auditor</td><td><button data-row="row-3" aria-label="Archive Reply to auditor">Archive</button></td></tr>
+        </tbody>
+      </table>
+      <task-form></task-form>
+    </div>
+
+    <div id="panel-payment" style="display:none">
+      <iframe id="pay" src="/pay.html" title="Payment widget"></iframe>
+    </div>
+  </section>
+</main>
+
+<script>
+  const toast = (text) => { document.getElementById('toast').textContent = text; };
+
+  document.getElementById('signin').addEventListener('click', () => {
+    document.getElementById('who').textContent = document.getElementById('email').value || 'nobody';
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+  });
+
+  document.getElementById('tab-tasks').addEventListener('click', () => {
+    document.getElementById('tab-tasks').setAttribute('aria-selected', 'true');
+    document.getElementById('tab-payment').setAttribute('aria-selected', 'false');
+    document.getElementById('panel-tasks').style.display = 'block';
+    document.getElementById('panel-payment').style.display = 'none';
+  });
+  document.getElementById('tab-payment').addEventListener('click', () => {
+    document.getElementById('tab-tasks').setAttribute('aria-selected', 'false');
+    document.getElementById('tab-payment').setAttribute('aria-selected', 'true');
+    document.getElementById('panel-tasks').style.display = 'none';
+    document.getElementById('panel-payment').style.display = 'block';
+  });
+
+  document.getElementById('rows').addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-row]');
+    if (!button) return;
+    const row = document.getElementById(button.dataset.row);
+    row.classList.add('archived');
+    button.disabled = true;
+    toast('Archived ' + row.cells[0].textContent);
+  });
+
+  // the task form lives in a shadow root: real design systems keep controls there
+  class TaskForm extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = `
+        <fieldset style="margin-top:16px">
+          <legend>New task</legend>
+          <label for="name">Task name</label>
+          <input id="name">
+          <label for="priority">Priority</label>
+          <select id="priority"><option value="low">low</option><option value="high">high</option></select>
+          <label><input id="notify" type="checkbox"> Notify me</label>
+          <button id="create">Create task</button>
+        </fieldset>`;
+      root.getElementById('create').addEventListener('click', () => {
+        const name = root.getElementById('name').value.trim();
+        const priority = root.getElementById('priority').value;
+        const notify = root.getElementById('notify').checked;
+        window.dispatchEvent(new CustomEvent('task-created', { detail: { name, priority, notify } }));
+      });
+    }
+  }
+  customElements.define('task-form', TaskForm);
+
+  window.addEventListener('task-created', (event) => {
+    const { name, priority, notify } = event.detail;
+    const rows = document.getElementById('rows');
+    const row = document.createElement('tr');
+    row.innerHTML = `<td></td><td></td>`;
+    rows.appendChild(row);
+    row.cells[0].textContent = name;
+    toast(`Created task ${name} (${priority}${notify ? ', notified' : ''})`);
+  });
+</script>
+</body>
+</html>

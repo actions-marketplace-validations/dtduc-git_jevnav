@@ -460,7 +460,17 @@ Interactive versions of both sequences: `docs/seq-chrome-devtools.html`,
 
 ## Benchmarks
 
-Two numbers matter here, and only one of them is a comparison.
+On a *driving* task set (a local ops console: sign-in, a form inside a shadow
+root, a table row action, an iframe invoice), same cheap LLM for both servers,
+n=2 per task: **jevnav 8/8 tasks, chrome-devtools-mcp 6/8** — and the two
+failures were model flakiness, not capability (a manual rerun finished with the
+right answer through the shadow root). chrome-devtools was **2.4x faster
+end-to-end** (19.3s vs 45.6s mean) with fewer calls. That is the honest
+correction to any "faster" claim: jevnav's advantage is *decision cost* and
+*evidence*, not wall clock on small pages. Full method and caveats:
+`research/driving-benchmark.md`.
+
+Two more numbers, and only one of them is a comparison.
 
 **Deterministic, and the one to hold jevnav to:** `replay` is offline, needs no
 API key, and exits 1 when a recorded decision no longer resolves. There is no

@@ -1,0 +1,162 @@
+[
+  {
+    "server": "jevnav",
+    "task": "login",
+    "ok": true,
+    "reported": "demo@example.com",
+    "expected": "demo@example.com",
+    "seconds": 19.6,
+    "calls": 5,
+    "run": 1
+  },
+  {
+    "server": "jevnav",
+    "task": "login",
+    "ok": true,
+    "reported": "demo@example.com",
+    "expected": "demo@example.com",
+    "seconds": 18.5,
+    "calls": 4,
+    "run": 2
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "login",
+    "ok": true,
+    "reported": "demo@example.com",
+    "expected": "demo@example.com",
+    "seconds": 16.9,
+    "calls": 5,
+    "run": 1
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "login",
+    "ok": true,
+    "reported": "demo@example.com",
+    "expected": "demo@example.com",
+    "seconds": 16.1,
+    "calls": 5,
+    "run": 2
+  },
+  {
+    "server": "jevnav",
+    "task": "create",
+    "ok": true,
+    "reported": "Created task Audit (high, notified)",
+    "expected": "Created task Audit (high, notified)",
+    "seconds": 60.9,
+    "calls": 22,
+    "run": 1
+  },
+  {
+    "server": "jevnav",
+    "task": "create",
+    "ok": true,
+    "reported": "Created task Audit (high, notified)",
+    "expected": "Created task Audit (high, notified)",
+    "seconds": 95.3,
+    "calls": 29,
+    "run": 2
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "create",
+    "ok": false,
+    "reported": "",
+    "expected": "Created task Audit (high, notified)",
+    "seconds": 14.6,
+    "calls": 4,
+    "run": 1
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "create",
+    "ok": false,
+    "reported": "<the answer>  (if you could not finish, ANSWER=FAILED)",
+    "expected": "Created task Audit (high, notified)",
+    "seconds": 19.4,
+    "calls": 7,
+    "run": 2
+  },
+  {
+    "server": "jevnav",
+    "task": "payment",
+    "ok": true,
+    "reported": "128.50 USD",
+    "expected": "128.50",
+    "seconds": 40.5,
+    "calls": 12,
+    "run": 1
+  },
+  {
+    "server": "jevnav",
+    "task": "payment",
+    "ok": true,
+    "reported": "128.50",
+    "expected": "128.50",
+    "seconds": 52.2,
+    "calls": 9,
+    "run": 2
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "payment",
+    "ok": true,
+    "reported": "128.50 USD",
+    "expected": "128.50",
+    "seconds": 18.0,
+    "calls": 5,
+    "run": 1
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "payment",
+    "ok": true,
+    "reported": "$128.50 USD",
+    "expected": "128.50",
+    "seconds": 19.5,
+    "calls": 5,
+    "run": 2
+  },
+  {
+    "server": "jevnav",
+    "task": "archive",
+    "ok": true,
+    "reported": "Archived Renew TLS certificate",
+    "expected": "Archived Renew TLS certificate",
+    "seconds": 32.8,
+    "calls": 9,
+    "run": 1
+  },
+  {
+    "server": "jevnav",
+    "task": "archive",
+    "ok": true,
+    "reported": "Archived Renew TLS certificate",
+    "expected": "Archived Renew TLS certificate",
+    "seconds": 45.3,
+    "calls": 9,
+    "run": 2
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "archive",
+    "ok": true,
+    "reported": "Archived Renew TLS certificate",
+    "expected": "Archived Renew TLS certificate",
+    "seconds": 24.9,
+    "calls": 8,
+    "run": 1
+  },
+  {
+    "server": "chrome-devtools",
+    "task": "archive",
+    "ok": true,
+    "reported": "Archived Renew TLS certificate",
+    "expected": "Archived Renew TLS certificate",
+    "seconds": 25.1,
+    "calls": 10,
+    "run": 2
+  }
+]
