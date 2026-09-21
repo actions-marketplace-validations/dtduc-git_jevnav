@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workspace — Settings</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: #111; color: #fff; }
+  header h1 { font-size: 18px; margin: 0 auto 0 0; }
+  main { padding: 24px; max-width: 720px; display: grid; gap: 20px; }
+  section { border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
+  section h2 { font-size: 15px; margin: 0 0 10px; }
+  label { display: block; margin: 8px 0 2px; }
+  input { padding: 6px; width: 100%; box-sizing: border-box; }
+  button { padding: 6px 12px; margin-top: 10px; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border-bottom: 1px solid #eee; padding: 6px 8px; text-align: left; }
+  td button { margin: 0; }
+  #row-actions { font-size: 18px; line-height: 1; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Workspace settings</h1>
+  <button id="row-actions" aria-label="More actions">&#8943;</button>
+  <button id="archive-project">Archive</button>
+</header>
+
+<main>
+  <section aria-label="Profile">
+    <h2>Profile</h2>
+    <label for="display-name">Display name</label>
+    <input id="display-name" value="demo">
+    <button id="save-profile" type="button">Save</button>
+  </section>
+
+  <section aria-label="Billing">
+    <h2>Billing</h2>
+    <label for="billing-email">Billing email</label>
+    <input id="billing-email" value="billing@example.com">
+    <button id="save-billing" type="button">Save</button>
+  </section>
+
+  <section aria-label="Filters">
+    <h2>Filters</h2>
+    <p>Active filter: Status is open <button id="remove-filter" type="button">Remove</button></p>
+  </section>
+
+  <section aria-label="Subscription">
+    <h2>Subscription</h2>
+    <button id="cancel-sub" type="button">Cancel subscription</button>
+    <button id="send-test" type="button">Send test email</button>
+  </section>
+
+  <section aria-label="Projects">
+    <h2>Projects</h2>
+    <table>
+      <thead><tr><th>Project</th><th>Owner</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>Alpha</td><td>ana</td><td><button id="edit-1" type="button">Edit</button></td></tr>
+        <tr><td>Beta</td><td>bo</td><td><button id="edit-2" type="button">Edit</button></td></tr>
+        <tr><td>Gamma</td><td>cy</td><td><button id="edit-3" type="button">Edit</button></td></tr>
+      </tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>

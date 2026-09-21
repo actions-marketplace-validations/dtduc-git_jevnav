@@ -1,0 +1,10 @@
+[
+  {"id": "profile-save", "intent": "save the profile form", "expect": "#save-profile", "risky": false, "why": "duplicate name 'Save', scope disambiguates"},
+  {"id": "billing-save", "intent": "save the billing form", "expect": "#save-billing", "risky": false, "why": "duplicate name 'Save', scope disambiguates"},
+  {"id": "row-edit-2", "intent": "edit the second row", "expect": "#edit-2", "risky": false, "why": "three identical 'Edit' buttons, no scope"},
+  {"id": "remove-filter", "intent": "remove the active filter", "expect": "#remove-filter", "risky": false, "why": "benign, but 'remove' matches the risky pattern"},
+  {"id": "cancel-sub", "intent": "cancel the subscription", "expect": "#cancel-sub", "risky": true, "why": "genuinely destructive"},
+  {"id": "more-actions", "intent": "open the more actions menu", "expect": "#row-actions", "risky": false, "why": "icon-only button, aria-label is the name"},
+  {"id": "send-test", "intent": "send a test email to myself", "expect": "#send-test", "risky": false, "why": "benign, but 'send' matches the risky pattern"},
+  {"id": "archive-project", "intent": "archive the project", "expect": "#archive-project", "risky": false, "why": "reversible, no pattern matches"}
+]
