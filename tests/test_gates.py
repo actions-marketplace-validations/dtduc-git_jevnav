@@ -189,6 +189,7 @@ def test_risky_patterns_are_not_english_only():
         "xoá tài khoản của tôi",
         "Xóa tài khoản",
         "konto löschen",
+        "das abo kündigen",  # the gate study's recall gap, 2026-09-21
         "supprimer le compte",
         "eliminar la cuenta",
         "アカウントを削除",

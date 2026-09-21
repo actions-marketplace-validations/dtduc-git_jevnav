@@ -43,7 +43,11 @@ DEFAULT_RISKY = [
     # the same actions in the languages real UIs are written in: English-only
     # patterns meant the gate quietly became "p >= threshold" on those pages
     r"(xoá|xóa|hủy|xoa tai khoan|đóng tài khoản|thanh toán|chuyển tiền|hoàn tiền)",
-    r"(löschen|entfernen|konto schließen|bezahlen|kaufen|überweisen|erstatten)",
+    # "kündigen" and "widerrufen" were the recall gap the gate study found
+    # ("das abo kündigen" ran through); "abmelden" stays out on purpose — it is
+    # also "log out", which is benign.
+    r"(löschen|entfernen|konto schließen|konto deaktivieren|bezahlen|kaufen"
+    r"|überweisen|erstatten|kündigen|widerrufen)",
     r"(supprimer|effacer|fermer le compte|payer|acheter|virement|rembourser)",
     r"(eliminar|borrar|cerrar la cuenta|pagar|comprar|transferir|reembolsar)",
     r"(excluir|apagar|encerrar a conta|pagar|comprar|transferir|reembolsar)",
