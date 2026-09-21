@@ -30,6 +30,7 @@ import pytest
 
 from .agent import context_value
 from .browser import browser_session
+from .flow import recorded_url
 from .gates import AUTO, load_gates, verdict
 from .page import by_cid, execute, extract, locator_for
 from .trace import TraceWriter
@@ -127,10 +128,38 @@ class JevNavigator:
         return self._act(intent, "press", None, key=key)
 
     def expect(self, selector: str, *, timeout_ms: int = 5_000) -> None:
-        """Assert the outcome the way a test should: against the page, not the model."""
+        """Assert the outcome the way a test should: against the page, not the model.
+
+        The assertion is recorded on the step, so ``replay --execute`` checks it
+        too: a replayed flow whose outcome selector is gone fails, even when
+        every target still resolves.
+        """
+        error: Exception | None = None
         try:
             self.page.locator(selector).first.wait_for(state="visible", timeout=timeout_ms)
-        except Exception as error:
+        except Exception as failure:
+            error = failure
+        self.step += 1
+        self.writer.step(
+            step=self.step,
+            intent=f"expect {selector}",
+            action={"type": "none"},
+            url=recorded_url(self.page.url, self.writer.path.resolve().parent),
+            title=self.page.title(),
+            total_on_page=0,
+            dropped=0,
+            candidates=[],
+            decision={"choice": "none", "confidence": 1.0},
+            gate={"verdict": "n/a", "reason": "an expectation, not an action"},
+            locator=None,
+            result={
+                "correct": None,
+                "executed": False,
+                "error": None if error is None else f"{type(error).__name__}: {error}",
+            },
+            verify={"selector": selector, "verified": error is None},
+        )
+        if error is not None:
             pytest.fail(f"expected {selector!r} to be visible: {error}")
 
     def trace_path(self) -> Path:
@@ -194,7 +223,7 @@ class JevNavigator:
             "step": self.step,
             "intent": intent,
             "action": action_record,
-            "url": self.page.url,
+            "url": recorded_url(self.page.url, self.writer.path.resolve().parent),
             "title": self.page.title(),
             "total_on_page": total,
             "dropped": dropped,

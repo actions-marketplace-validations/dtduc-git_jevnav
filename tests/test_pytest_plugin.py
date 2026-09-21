@@ -32,8 +32,12 @@ def test_actions_are_intents_and_the_trace_is_replayable(navigator, tmp_path, ap
     assert [step["intent"] for step in steps] == [
         "sign in to the account",
         "the email address",
+        "expect #login-submit",
     ]
-    assert all(step["gate"]["verdict"] == "auto" for step in steps)
+    assert steps[-1]["verify"] == {"selector": "#login-submit", "verified": True}
+    assert all(
+        step["gate"]["verdict"] == "auto" for step in steps if step["action"]["type"] != "none"
+    )
     assert steps[0]["locator"]["selector"].startswith("role=")
     assert steps[1]["action"] == {"type": "fill", "value": "demo@example.com"}
 
@@ -154,6 +158,31 @@ def test_clearing_a_field_is_recorded_and_replays(navigator, app_url, page):
     assert page.locator("#login-email").input_value() == ""
 
 
+def test_a_file_url_is_recorded_relative_to_the_trace(tmp_path, page):
+    """A committed trace must replay on another machine: file:../app.html, not /Users/..."""
+    from jevnav.replay import replay_trace
+
+    (tmp_path / "app.html").write_text(
+        "<html><body><button id=go>Go</button><span id=done hidden>done</span>"
+        "<script>go.onclick = () => done.hidden = false</script></body></html>"
+    )
+    writer = TraceWriter(tmp_path / "test_go.trace.jsonl", flow="pytest:test_go")
+    jev = JevNavigator(
+        page,
+        FakeJev({"go": "Go"}).client(),
+        writer,
+        gates=default_gates(),
+    )
+    jev.goto((tmp_path / "app.html").as_uri())
+    jev.click("go")
+    writer.close()
+    _, steps = read_trace(writer.path)
+    assert steps[0]["url"] == "file:app.html"
+    result = replay_trace(writer.path, page=page, execute=True, settle_ms=0)
+    assert result["failed"] == []
+    assert page.locator("#done").is_visible()
+
+
 def test_a_press_records_its_key_and_replays(navigator, app_url, page):
     from jevnav.replay import replay_trace
 
@@ -168,11 +197,26 @@ def test_a_press_records_its_key_and_replays(navigator, app_url, page):
 
 
 def test_expect_fails_on_the_page_not_on_the_model(navigator, app_url):
-    jev, _ = navigator
+    jev, writer = navigator
     jev.goto(app_url)
     with pytest.raises(BaseException) as failure:
         jev.expect("#not-here", timeout_ms=200)
     assert "not-here" in str(failure.value)
+    _, steps = read_trace(writer.path)
+    assert steps[-1]["verify"] == {"selector": "#not-here", "verified": False}
+
+
+def test_expect_is_recorded_and_replay_verifies_it(navigator, app_url, page):
+    from jevnav.replay import replay_trace
+
+    jev, writer = navigator
+    jev.goto(app_url)
+    jev.expect("#login-submit")
+    writer.close()
+    result = replay_trace(writer.path, page=page, execute=True, settle_ms=0)
+    assert result["failed"] == []
+    assert result["success"] == {"selector": "#login-submit", "verified": True}
+    assert result["results"][-1]["drift"] == {"new": 0, "missing": 0}
 
 
 def test_the_plugin_registers_its_options():

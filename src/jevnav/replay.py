@@ -114,11 +114,14 @@ def replay_step(
 
     current_fps = Counter(c["fp"] for c in current)
     recorded_fps = Counter(c["fp"] for c in step["candidates"])
-    result["page_identical"] = current_fps == recorded_fps
-    result["drift"] = {
-        "new": sum((current_fps - recorded_fps).values()),
-        "missing": sum((recorded_fps - current_fps).values()),
-    }
+    if step["candidates"]:
+        result["page_identical"] = current_fps == recorded_fps
+        result["drift"] = {
+            "new": sum((current_fps - recorded_fps).values()),
+            "missing": sum((recorded_fps - current_fps).values()),
+        }
+    # else: nothing was recorded for this step (an expectation, no model call),
+    # so there is no candidate set to compare — drift would count the whole page.
     if choice in (None, "none"):
         result["reason"] = "recorded as no-match; nothing to resolve"
         return result
