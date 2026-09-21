@@ -1,5 +1,7 @@
 # jevnav
 
+<!-- mcp-name: io.github.dtduc-git/jevnav -->
+
 **Browser automation whose decisions you can replay, test and audit.**
 
 [![CI](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml/badge.svg)](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml)
@@ -25,7 +27,7 @@ are confident, unauditable and occasionally wrong. jevnav sits in between:
 ## Install
 
 ```bash
-uv tool install jevnav          # or: pip install jevnav
+uv tool install jevnav          # or: pip install jevnav (the MCP server is included)
 playwright install chromium     # one-time browser download
 ```
 
@@ -196,7 +198,6 @@ jevnav runs its own browser and exposes it as an MCP server, so a coding agent
 page through Jev decisions instead of writing selectors:
 
 ```bash
-pip install "jevnav[mcp]"
 jevnav mcp          # that is the whole setup: no URL, no trace path, no flags
 ```
 

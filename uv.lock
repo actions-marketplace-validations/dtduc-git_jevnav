@@ -444,6 +444,7 @@ name = "jevnav"
 source = { editable = "." }
 dependencies = [
     { name = "jevassert" },
+    { name = "mcp" },
     { name = "playwright" },
     { name = "pyyaml" },
 ]
@@ -463,6 +464,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jevassert", specifier = ">=0.2,<0.3" },
+    { name = "mcp", specifier = ">=1.2" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
     { name = "playwright", specifier = ">=1.49" },
     { name = "pyyaml", specifier = ">=6.0" },
