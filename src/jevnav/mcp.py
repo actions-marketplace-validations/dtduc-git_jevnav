@@ -213,7 +213,11 @@ class Session:
         return out
 
     def goal(
-        self, goal: str, context: dict[str, str] | None = None, max_steps: int = 8
+        self,
+        goal: str,
+        context: dict[str, str] | None = None,
+        max_steps: int = 8,
+        success: str | None = None,
     ) -> dict[str, Any]:
         """Drive the browser towards a goal, one gated Jev decision per step."""
         from .trace import NullWriter
@@ -228,6 +232,7 @@ class Session:
                 model=self.model,
                 context=context or {},
                 max_steps=max_steps,
+                success=success,
             )
         )
         self.steps.extend(result["steps"])
@@ -304,19 +309,23 @@ def serve(
         return json.dumps(session.goto(url), ensure_ascii=False)
 
     @mcp.tool()
-    def goal(goal: str, context_json: str = "{}", max_steps: int = 8) -> str:
+    def goal(
+        goal: str, context_json: str = "{}", max_steps: int = 8, success: str | None = None
+    ) -> str:
         """Drive the browser towards a goal: Jev decides every step, jevnav acts.
 
         ``context_json`` is a JSON object of values the goal may need, e.g.
-        {"email": "a@b.c", "password": "${PW}"}. Returns the outcome (done,
-        stuck, review, ...), the steps taken, cost and whether the outcome was
-        verified. Risky steps stop the loop and come back unexecuted.
+        {"email": "a@b.c", "password": "${PW}"}. ``success`` is a selector that
+        must be visible when the goal is done: pass it and the outcome comes
+        back verified or the run is reported as unverified. Returns the outcome
+        (done, stuck, review, ...), the steps taken, cost and the verification.
+        Risky steps stop the loop and come back unexecuted.
         """
         try:
             context = json.loads(context_json or "{}")
         except json.JSONDecodeError as error:
             return json.dumps({"status": "error", "error": f"context_json is not JSON: {error}"})
-        return json.dumps(session.goal(goal, context, max_steps), ensure_ascii=False)
+        return json.dumps(session.goal(goal, context, max_steps, success), ensure_ascii=False)
 
     @mcp.tool()
     def page_state() -> str:

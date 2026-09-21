@@ -142,7 +142,7 @@ Tools:
 |---|---|
 | `goto(url)` | open a page in jevnav's browser |
 | `browse(intent, action, value)` | one step: Jev picks the element, the gate decides, and only `auto` acts |
-| `goal(goal, context_json, max_steps)` | drive the whole way: "sign in and open billing" — returns `done` / `stuck` / `review` and whether the outcome was verified |
+| `goal(goal, context_json, max_steps, success)` | drive the whole way: "sign in and open billing" — `success` is a selector the outcome is verified against; returns `done` / `stuck` / `review` plus the verification |
 | `page_state()` | URL, title and the interactive elements jevnav can see |
 | `summary()` | this session: steps, auto/review/blocked, cost, latency |
 

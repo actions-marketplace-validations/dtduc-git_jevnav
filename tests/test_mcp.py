@@ -160,8 +160,15 @@ def test_goal_tool_drives_the_browser(session):
             {"action": "click", "target": "Sign in"},
         ]
     ).client()
-    outcome = session.goal("sign in with the demo account", {"email": "demo@example.com"})
+    from helpers import fixture_url
+
+    outcome = session.goal(
+        "sign in with the demo account",
+        {"email": "demo@example.com"},
+        success="#sign-out",
+    )
     assert outcome["status"] == "done"
+    assert outcome["verified"] is True
     assert outcome["steps"] == 3
     assert session.page.is_visible("#signed-in-as")
     assert session.summary()["steps"] == 3
