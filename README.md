@@ -453,8 +453,17 @@ step**, p50 314ms per step. One real run — sign in then open pricing — took 
 steps, $0.000214, and replayed offline with `--execute`: 5/5 targets resolved,
 outcome verified.
 
-The element-decision spike (44 decisions: local fixtures, Hacker News, PyPI,
-Wikipedia):
+On real pages (`research/browser-element-selection.md`, 30 hand-labelled cases
+across 8 public sites, one decision each, model `jev-1.13.0`):
+
+- **25/26 scored cases correct (96.2%)**; 18 ran at `p >= 0.9` and **all 18 were
+  right**; the single miss answered at `p=0.57` and went to review.
+- 321ms p50, **$0.000155 per decision**.
+- Small n, single annotator, well-built pages: a direction, not a proof. The
+  cases, the runner and the excluded-case log are all in the repo.
+
+The build-time element-decision spike (44 decisions: local fixtures, Hacker News,
+PyPI, Wikipedia):
 
 - **44/44** decisions correct; **28/28** at `p ≥ 0.9` (the auto gate).
 - Replay caught **4/4** injected DOM changes with **0** false alarms on the

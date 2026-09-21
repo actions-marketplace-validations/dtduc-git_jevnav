@@ -1,0 +1,182 @@
+[
+  {
+    "id": "hn-front-newest",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Open the newest submissions page",
+    "expect": "a[href='newest']"
+  },
+  {
+    "id": "hn-front-ask",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Open the Ask HN section",
+    "expect": "a[href='ask']"
+  },
+  {
+    "id": "hn-front-show",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Open the Show HN section",
+    "expect": "a[href='show']"
+  },
+  {
+    "id": "hn-front-jobs",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Open the jobs board",
+    "expect": "a[href='jobs']"
+  },
+  {
+    "id": "hn-front-submit",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Submit a new story",
+    "expect": "a[href='submit']"
+  },
+  {
+    "id": "hn-front-login",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Log in to the site",
+    "expect": "a[href^='login']"
+  },
+  {
+    "id": "hn-newest-front",
+    "url": "https://news.ycombinator.com/newest",
+    "intent": "Go to the front page",
+    "expect": "a[href='front']"
+  },
+  {
+    "id": "hn-newest-comments",
+    "url": "https://news.ycombinator.com/newest",
+    "intent": "Open the comments feed",
+    "expect": "a[href='newcomments']"
+  },
+  {
+    "id": "hn-newest-submit",
+    "url": "https://news.ycombinator.com/newest",
+    "intent": "Post a new story",
+    "expect": "a[href='submit']"
+  },
+  {
+    "id": "hn-newest-hide",
+    "url": "https://news.ycombinator.com/newest",
+    "intent": "Hide the first story from the list",
+    "expect": "a[href^='hide?id=']"
+  },
+  {
+    "id": "wiki-main-search",
+    "url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Search Wikipedia for an article",
+    "expect": "input[name='search'], #searchInput"
+  },
+  {
+    "id": "wiki-main-contents",
+    "url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Open the contents page that lists all topics",
+    "expect": "a[title='Guides to browsing Wikipedia']"
+  },
+  {
+    "id": "wiki-main-community",
+    "url": "https://en.wikipedia.org/wiki/Main_Page",
+    "intent": "Open the community portal",
+    "expect": "a[href='https://en.wikipedia.org/wiki/Wikipedia:Community_portal']"
+  },
+  {
+    "id": "wiki-art-talk",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "Open the talk page of this article",
+    "expect": "#ca-talk a"
+  },
+  {
+    "id": "wiki-art-history",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "View the edit history of this article",
+    "expect": "#ca-history a"
+  },
+  {
+    "id": "pypi-home-search",
+    "url": "https://pypi.org/",
+    "intent": "Search PyPI for a package",
+    "expect": "input[name='q']"
+  },
+  {
+    "id": "pypi-home-browse",
+    "url": "https://pypi.org/",
+    "intent": "Browse all projects on PyPI",
+    "expect": "a[href='/search/']"
+  },
+  {
+    "id": "pypi-requests-history",
+    "url": "https://pypi.org/project/requests/",
+    "intent": "Check the release history of this package",
+    "expect": "a[href$='#history']"
+  },
+  {
+    "id": "mdn-home-js",
+    "url": "https://developer.mozilla.org/en-US/",
+    "intent": "Open the JavaScript reference",
+    "expect": "a[href='/en-US/docs/Web/JavaScript']"
+  },
+  {
+    "id": "mdn-home-html",
+    "url": "https://developer.mozilla.org/en-US/",
+    "intent": "Open the HTML reference",
+    "expect": "a[href='/en-US/docs/Web/HTML']"
+  },
+  {
+    "id": "python-jobs",
+    "url": "https://www.python.org/",
+    "intent": "Browse Python job postings",
+    "expect": "a[href='/jobs/']"
+  },
+  {
+    "id": "python-events",
+    "url": "https://www.python.org/",
+    "intent": "See upcoming Python events and conferences",
+    "expect": "a[href='/events/']"
+  },
+  {
+    "id": "gh-repo-issues",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the issues tab of this repository",
+    "expect": "#issues-tab"
+  },
+  {
+    "id": "gh-repo-pulls",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the pull requests tab",
+    "expect": "#pull-requests-tab"
+  },
+  {
+    "id": "gh-repo-actions",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the CI workflow runs",
+    "expect": "#actions-tab"
+  },
+  {
+    "id": "gh-repo-stars",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Star this repository",
+    "expect": "#repo-stars-counter-star, button[aria-label*='Star']"
+  },
+  {
+    "id": "example-home",
+    "url": "https://example.com/",
+    "intent": "Open the IANA page about example domains",
+    "expect": "a"
+  },
+  {
+    "id": "crates-search",
+    "url": "https://crates.io/",
+    "intent": "Search for a Rust crate",
+    "expect": "input[type='search'], input[name='q']"
+  },
+  {
+    "id": "pydocs-tutorial",
+    "url": "https://docs.python.org/3/",
+    "intent": "Open the Python tutorial",
+    "expect": "a[href='tutorial/index.html']"
+  },
+  {
+    "id": "pydocs-library",
+    "url": "https://docs.python.org/3/",
+    "intent": "Open the standard library reference",
+    "expect": "a[href='library/index.html']"
+  }
+]
