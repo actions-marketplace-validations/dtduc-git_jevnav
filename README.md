@@ -138,6 +138,32 @@ Change `Sign in` to `Log in` on the site and the same replay reports:
 
 Exit code 1, with the reason — that is the CI gate.
 
+## pytest — intents in an ordinary test
+
+The `jev` fixture ships with the package, so a normal Playwright test gets Jev
+decisions without changing how you write tests — and every test writes a trace
+that replays in CI:
+
+```python
+def test_sign_in(jev):
+    jev.goto("https://app.example.com/login")
+    jev.fill("the email address", "demo@example.com")
+    jev.fill("the password field", "${DEMO_PASSWORD}")
+    jev.click("the sign-in button")
+    jev.expect("#welcome")
+```
+
+```bash
+DEMO_PASSWORD=... pytest --jev-trace-dir=traces
+DEMO_PASSWORD=... jevnav replay --execute traces/test_sign_in.trace.jsonl  # offline, no key
+```
+
+`jev.expect` is recorded on the trace, so the replay verifies the outcome as
+well as re-running the actions. A `review` verdict fails the test before the
+action runs, `${VAR}` values are recorded by name only, and `jev.page` is the
+real Playwright page for everything else. Runnable example, with a committed
+trace anyone can replay: [`examples/pytest-interop/`](examples/pytest-interop/).
+
 ## Games (the Doom shape)
 
 A game has no candidate list to extract, so `play` takes the other shape: you

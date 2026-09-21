@@ -25,8 +25,11 @@ jobs:
 
   replay:
     # The action as users get it, run against the committed example traces:
-    # once resolving decisions, once re-running a whole recorded agent run.
+    # once resolving decisions, once re-running a whole recorded agent run, and
+    # once the pytest plugin's trace (which fills a password from the env).
     runs-on: ubuntu-latest
+    env:
+      DEMO_PASSWORD: hunter2
     steps:
       - uses: actions/checkout@v5
       - uses: ./
@@ -40,5 +43,11 @@ jobs:
           execute: "true"
           report: replay-go-report.md
           version: local
+      - uses: ./
+        with:
+          trace: examples/pytest-interop/test_sign_in.trace.jsonl
+          execute: "true"
+          report: replay-pytest-report.md
+          version: local
       - name: Report
-        run: cat replay-report.md replay-go-report.md
+        run: cat replay-report.md replay-go-report.md replay-pytest-report.md

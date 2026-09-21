@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme — Sign in</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: grid; place-items: center; min-height: 100vh; }
+  form { border: 1px solid #ccc; border-radius: 8px; padding: 24px; width: 320px; }
+  label { display: block; margin: 10px 0 2px; }
+  input { padding: 6px; width: 100%; box-sizing: border-box; }
+  button { padding: 8px 14px; margin-top: 14px; width: 100%; }
+  #welcome { margin-top: 16px; }
+</style>
+</head>
+<body>
+<form id="login" onsubmit="return false">
+  <h1>Acme Console</h1>
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" placeholder="you@example.com">
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password">
+  <button id="submit" type="submit">Sign in</button>
+  <p id="welcome" hidden>Welcome back, demo@example.com</p>
+</form>
+<script>
+  document.querySelector("#login").addEventListener("submit", () => {
+    document.querySelector("#welcome").hidden = false;
+  });
+</script>
+</body>
+</html>
