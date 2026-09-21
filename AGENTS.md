@@ -45,6 +45,10 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
   lever with a measured trade: same accuracy on the HN task at 40 vs 199
   candidates, 2.8x faster cold and 3.8x fewer tokens. If you change the ordering
   or the default cap, re-measure on a real page and write the number down.
+- Dialogs cannot be parked for a human: Playwright's sync API must answer inside
+  the handler, and a parked dialog blocks the renderer (measured: the next call
+  never returned). They are answered by `dialog_policy` rules set in advance and
+  always recorded. Do not reintroduce a "park and ask" path.
 - Side tools (screenshot, upload, drag, resize, emulate, route, trace, perf, heap,
   lighthouse) are observation/acting conveniences for the caller. They must never
   enter the decision path, the gate, or a replay, and they are not written to a

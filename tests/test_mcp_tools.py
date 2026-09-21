@@ -242,3 +242,117 @@ def test_lighthouse_scores_when_npx_is_available(page, tmp_path):
         pytest.skip(f"lighthouse did not run: {error}")
     assert "performance" in scores
     session.close()
+
+
+def test_press_key_with_a_modifier(page, tmp_path):
+    session = make_session(page, tmp_path)
+    record_key = (
+        'addEventListener("keydown", (e) => {'
+        " window.last = [e.key, e.ctrlKey || e.metaKey, e.shiftKey]; })"
+    )
+    page.set_content(f"<input id=in><script>window.last = null;{record_key}</script>")
+    page.click("#in")
+    session.press_key("Control+Shift+K")
+    assert page.evaluate("window.last") == ["K", True, True]
+    session.close()
+
+
+def test_fill_form_fills_several_fields_at_once(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content(
+        "<input id=a><input id=b><input id=c type=checkbox>"
+        "<select id=d><option>one</option><option>two</option></select>"
+    )
+    out = session.fill_form(
+        [
+            {"selector": "#a", "value": "first"},
+            {"selector": "#b", "value": "second"},
+            {"selector": "#c", "action": "check", "value": True},
+            {"selector": "#d", "action": "select", "value": "two"},
+        ]
+    )
+    assert len(out["filled"]) == 4
+    assert page.input_value("#a") == "first"
+    assert page.input_value("#b") == "second"
+    assert page.is_checked("#c") is True
+    assert page.input_value("#d") == "two"
+    session.close()
+
+
+def test_fill_form_can_resolve_an_intent(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.client = FakeJev({"email address": "work email"}).client()
+    page.set_content(
+        "<label for=w>Work email</label><input id=w><label for=p>Phone</label><input id=p>"
+    )
+    session.fill_form([{"intent": "type the email address", "value": "a@b.c"}])
+    assert page.input_value("#w") == "a@b.c"
+    session.close()
+
+
+def test_cpu_and_network_throttling_are_applied(page, tmp_path):
+    session = make_session(page, tmp_path)
+    applied = session.emulate(cpu_throttle=4, network_conditions="Slow 3G")
+    assert applied["cpu_throttle"] == 4
+    assert applied["network"]["download_kbps"] == 400
+    assert applied["network"]["preset"] == "Slow 3G"
+    with pytest.raises(ValueError, match="unknown network preset"):
+        session.emulate(network_conditions="Dial-up")
+    session.close()
+
+
+def test_network_detail_returns_headers_and_body(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.route("**/api/thing", body='{"n": 1}', content_type="application/json")
+    page.goto(fixture_url("loop-app.html"))
+    page.evaluate("async () => await fetch('https://x.test/api/thing')")
+    detail = session.network_detail(url_contains="/api/thing")
+    assert detail["status"] == 200
+    assert "application/json" in detail["response_headers"].get("content-type", "")
+    assert detail["body"] == '{"n": 1}'
+    with pytest.raises(RuntimeError, match="no recorded request matches"):
+        session.network_detail(url_contains="/nothing-like-this")
+    session.close()
+
+
+def test_a_dialog_is_answered_and_recorded(page, tmp_path):
+    session = make_session(page, tmp_path)  # default policy: dismiss
+    page.set_content("<p>ready</p>")
+    page.evaluate("setTimeout(() => { window.answer = confirm('delete it?') }, 30)")
+    page.wait_for_timeout(200)
+    assert page.evaluate("window.answer") is False
+    dialogs = session.dialogs()["dialogs"]
+    assert dialogs and dialogs[-1]["message"] == "delete it?"
+    assert dialogs[-1]["action"] == "dismiss"
+    session.close()
+
+
+def test_a_dialog_rule_matches_the_message_text(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.dialog_policy("accept", match="delete")
+    page.set_content("<p>ready</p>")
+    page.evaluate("setTimeout(() => { window.answer = confirm('delete it?') }, 30)")
+    page.wait_for_timeout(200)
+    assert page.evaluate("window.answer") is True
+    assert session.dialogs()["dialogs"][-1]["source"] == "rule:delete"
+    session.close()
+
+
+def test_the_policy_can_change_between_dialogs(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<p>ready</p>")
+    page.evaluate("setTimeout(() => { window.first = confirm('one?') }, 30)")
+    page.wait_for_timeout(200)
+    assert page.evaluate("window.first") is False
+    assert session.dialog_policy("accept") == {"policy": "accept"}
+    page.evaluate("setTimeout(() => { window.second = confirm('two?') }, 30)")
+    page.wait_for_timeout(200)
+    assert page.evaluate("window.second") is True
+    session.close()
+
+
+def test_dialog_policy_rejects_nonsense(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(ValueError, match="accept or dismiss"):
+        session.dialog_policy("maybe")
+    session.close()

@@ -125,9 +125,10 @@ If the fingerprint is gone or duplicated, replay refuses to act.
 `perf_metrics`, `heap_snapshot` and `lighthouse` are the agent's eyes and hands
 around the decision loop. They are **observation and navigation only**:
 nothing about them participates in a decision, a gate or a trace's replay path,
-and they are not written to the trace. Dialogs are the exception worth knowing:
-whatever policy resolves them (`--dialog-policy dismiss|accept`) the dialog text
-is recorded on the page recorder and reported by `dialogs`.
+and they are not written to the trace. Dialogs are the exception worth knowing: the sync API must answer a dialog
+inside its handler (parking one deadlocks the page — measured), so `dialog_policy`
+sets the answer in advance — a session default, or rules matched against the
+dialog's message text — and every dialog is recorded with the rule that fired.
 
 ## Browser modes
 

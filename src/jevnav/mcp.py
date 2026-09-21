@@ -227,7 +227,9 @@ class Session:
     def on_page(self, function: Callable[[Any], Any]) -> Any:
         """Run one browser operation, launching the browser the first time it is needed."""
         if self.browser is not None:
-            return self.browser.call(function)
+            return self.browser.call(
+                lambda page: (self.recorder and self.recorder.due_dialog(), function(page))[1]
+            )
         if self.page is None:
             self.browser = BrowserThread(**self._browser_kwargs)
             self.page, self.recorder = self.browser.call(lambda page: (page, self.browser.recorder))
@@ -389,9 +391,81 @@ class Session:
         self.on_page(do)
         return {"dragged": source_selector, "onto": target_selector}
 
+    def press_key(self, key: str, selector: str | None = None) -> dict[str, Any]:
+        """Press a key or combination ("Control+A", "Shift+Enter"), optionally on an element."""
+        if selector:
+            self.on_page(lambda page: page.locator(selector).first.press(key))
+        else:
+            self.on_page(lambda page: page.keyboard.press(key))
+        return {"key": key, "selector": selector}
+
+    def fill_form(self, fields: list[dict[str, Any]]) -> dict[str, Any]:
+        """Fill several fields in one call.
+
+        ``fields`` is a list of ``{"selector"|"intent", "value", "action"?}`` where
+        action is fill (default), select, check or type. An ``intent`` is resolved
+        by Jev against the file/text inputs the page shows.
+        """
+        results: list[dict[str, Any]] = []
+        for field in fields:
+            action = field.get("action", "fill")
+            value = field.get("value")
+            selector = field.get("selector")
+            if selector is None and field.get("intent"):
+                selector = self._selector_for_intent(
+                    field["intent"], roles={"textbox", "searchbox", "combobox", "checkbox", "radio"}
+                )
+            if selector is None:
+                raise ValueError(f"field {field!r} needs a selector or an intent")
+            self.on_page(
+                lambda page, sel=selector, act=action, val=value: _apply_field(page, sel, act, val)
+            )
+            results.append({"selector": selector, "action": action, "value": value})
+        return {"filled": results}
+
+    def _selector_for_intent(self, intent: str, *, roles: set[str]) -> str:
+        def choose(page: Any) -> str:
+            candidates, _, _ = page_module.extract(page)
+            pool = [c for c in candidates if c["role"] in roles] or candidates
+            if not pool:
+                raise RuntimeError(f"nothing to resolve {intent!r} against")
+            question = build_single_question(page, intent, pool)
+            response, _ = self.client.system_one(
+                {"page": f"{page.title()} — {page.url}"}, {"target": question}, model=self.model
+            )
+            choice = ((response.get("answers") or {}).get("target") or {}).get("choice")
+            chosen = next((c for c in pool if c["cid"] == choice), None)
+            if chosen is None:
+                raise RuntimeError(f"no element matched {intent!r}")
+            return f'[data-jevcid="{chosen["cid"]}"]'
+
+        return self.on_page(choose)
+
+    def network_detail(
+        self, index: int | None = None, url_contains: str | None = None
+    ) -> dict[str, Any]:
+        """Headers and body of one recorded request (newest match when filtering by URL)."""
+        return self._recorder().network_detail(index=index, url_contains=url_contains)
+
+    def dialog_policy(self, action: str = "accept", match: str | None = None) -> dict[str, Any]:
+        """Answer dialogs from now on: the session default, or a rule by message text.
+
+        The sync API has to answer inside the dialog handler, so a dialog cannot
+        be parked for a human (that deadlocks the page — measured). Set the
+        policy before the dialog appears instead; every dialog is still recorded.
+        """
+        return self._recorder().set_dialog_policy(action, match=match)
+
     def resize(self, width: int, height: int) -> dict[str, Any]:
         self.on_page(lambda page: page.set_viewport_size({"width": width, "height": height}))
         return {"viewport": {"width": width, "height": height}}
+
+    NETWORK_PRESETS = {
+        "Slow 3G": {"latency_ms": 400, "download_kbps": 400, "upload_kbps": 400},
+        "Fast 3G": {"latency_ms": 150, "download_kbps": 1600, "upload_kbps": 750},
+        "Slow 4G": {"latency_ms": 80, "download_kbps": 4000, "upload_kbps": 3000},
+        "Fast 4G": {"latency_ms": 20, "download_kbps": 16000, "upload_kbps": 9000},
+    }
 
     def emulate(
         self,
@@ -402,9 +476,28 @@ class Session:
         media: str | None = None,
         geolocation: str | None = None,
         offline: bool | None = None,
+        cpu_throttle: float | None = None,
+        network_conditions: str | None = None,
+        latency_ms: int | None = None,
+        download_kbps: int | None = None,
+        upload_kbps: int | None = None,
     ) -> dict[str, Any]:
-        """Emulate media, geolocation and connectivity (locale/timezone/UA are launch flags)."""
+        """Emulate media, geolocation, CPU throttling and network conditions.
+
+        CPU and network throttling go through CDP, so they are chromium-only.
+        ``network_conditions`` accepts a preset name or explicit kbps/latency.
+        """
         applied: dict[str, Any] = {}
+        preset = self.NETWORK_PRESETS.get(network_conditions) if network_conditions else None
+        if network_conditions and preset is None and latency_ms is None:
+            raise ValueError(
+                f"unknown network preset {network_conditions!r} (expected one of "
+                f"{sorted(self.NETWORK_PRESETS)} or explicit latency/download_kbps)"
+            )
+        profile = preset or {}
+        latency = latency_ms if latency_ms is not None else profile.get("latency_ms")
+        down = download_kbps if download_kbps is not None else profile.get("download_kbps")
+        up = upload_kbps if upload_kbps is not None else profile.get("upload_kbps")
 
         def run(page: Any) -> None:
             if color_scheme or reduced_motion or forced_colors or media:
@@ -423,6 +516,28 @@ class Session:
             if offline is not None:
                 page.context.set_offline(offline)
                 applied["offline"] = offline
+            if cpu_throttle is not None or down is not None:
+                cdp = page.context.new_cdp_session(page)
+                if cpu_throttle is not None:
+                    cdp.send("Emulation.setCPUThrottlingRate", {"rate": cpu_throttle})
+                    applied["cpu_throttle"] = cpu_throttle
+                if down is not None:
+                    cdp.send(
+                        "Network.emulateNetworkConditions",
+                        {
+                            "offline": bool(offline),
+                            "latency": latency or 0,
+                            "downloadThroughput": int(down * 1024 / 8),
+                            "uploadThroughput": int((up or down) * 1024 / 8),
+                        },
+                    )
+                    applied["network"] = {
+                        "latency_ms": latency or 0,
+                        "download_kbps": down,
+                        "upload_kbps": up or down,
+                        "preset": network_conditions,
+                    }
+                cdp.detach()
 
         self.on_page(run)
         for key, value in {
@@ -854,6 +969,30 @@ def serve(
         )
 
     @mcp.tool()
+    def press_key(key: str, selector: str | None = None) -> str:
+        """Press a key or combination ("Control+A", "Shift+Enter"), optionally on an element."""
+        return json.dumps(session.press_key(key, selector), ensure_ascii=False)
+
+    @mcp.tool()
+    def fill_form(fields_json: str) -> str:
+        """Fill several fields in one call: a JSON list of {selector|intent, value, action?}."""
+        try:
+            fields = json.loads(fields_json)
+        except json.JSONDecodeError as error:
+            return json.dumps({"error": f"fields_json is not JSON: {error}"})
+        return json.dumps(session.fill_form(fields), ensure_ascii=False)
+
+    @mcp.tool()
+    def network_detail(index: int | None = None, url_contains: str | None = None) -> str:
+        """Headers and body of one recorded request (newest match when filtering by URL)."""
+        return json.dumps(session.network_detail(index, url_contains), ensure_ascii=False)
+
+    @mcp.tool()
+    def dialog_policy(action: str = "accept", match: str | None = None) -> str:
+        """Answer dialogs from now on: the default (match=None) or one whose text matches."""
+        return json.dumps(session.dialog_policy(action, match), ensure_ascii=False)
+
+    @mcp.tool()
     def resize(width: int, height: int) -> str:
         """Resize the browser viewport."""
         return json.dumps(session.resize(width, height), ensure_ascii=False)
@@ -980,3 +1119,17 @@ def serve(
     finally:
         session.close()
     return 0
+
+
+def _apply_field(page: Any, selector: str, action: str, value: Any) -> None:
+    locator = page.locator(selector).first
+    if action == "fill":
+        locator.fill(str(value))
+    elif action == "type":
+        locator.type(str(value))
+    elif action == "select":
+        locator.select_option(str(value))
+    elif action == "check":
+        locator.check() if value in (True, "true", None) else locator.uncheck()
+    else:
+        raise ValueError(f"unknown fill_form action {action!r}")

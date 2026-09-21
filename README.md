@@ -220,6 +220,8 @@ Tools:
 | `drag(source_selector, target_selector)` | drag one element onto another |
 | `resize(width, height)` | change the viewport |
 | `emulate(color_scheme, media, geolocation, offline, …)` | emulate media, location and connectivity |
+| `press_key(key, selector)` | a key or combination ("Control+A"), optionally on an element |
+| `fill_form(fields_json)` | fill several fields in one call: {selector\|intent, value, action} |
 | `wait_for(text, selector, timeout_ms)` | wait for something to appear |
 | `scroll(direction, amount)` | scroll the document |
 | `tabs()`, `new_page(url)`, `select_page(i)`, `close_page(i)` | work with tabs |
@@ -230,11 +232,14 @@ Tools:
 |---|---|
 | `console(limit, only_errors)` | recent console messages and page errors |
 | `network(limit, only_failed)` | recent requests, with statuses |
-| `dialogs()` | alert/confirm/prompt, with the policy that resolved them |
+| `network_detail(index, url_contains)` | one request's headers and body |
+| `dialogs()` | alert/confirm/prompt, with the policy or rule that resolved them |
+| `dialog_policy(action, match)` | answer future dialogs: the default, or rules by message text |
 | `read_js(expression)` | evaluate JS in the page |
 | `route(pattern, status, body, abort)` / `unroute(pattern)` | stub or block requests (testing) |
 | `trace_start()` / `trace_stop(path)` | a Playwright trace zip for `playwright show-trace` |
 | `perf_metrics()`, `heap_snapshot(path)` | Chromium counters and a heap snapshot |
+| `emulate(cpu_throttle, network_conditions, …)` | CPU throttling and Slow-3G-style profiles (chromium, via CDP) |
 | `lighthouse(url, categories)` | Lighthouse scores, through npx |
 
 Wire it into a client (this JSON shape is what Cursor, Claude Desktop and VS
@@ -260,6 +265,14 @@ Why an agent would: it does not need its own Playwright MCP, it cannot click a
 trace that `jevnav replay --execute` can re-run in CI. Cost is about
 **$0.00004 and 330ms per step**; `page_state` and `goto` are free.
 
+### Dialogs: answered by rule, not parked
+
+Playwright's sync API must answer a dialog inside its handler. Parking one so a
+human can decide later blocks the renderer and the next call never returns
+(measured on this codebase, then removed). So jevnav answers from a policy you
+set in advance — `dialog_policy("accept", match="delete")` — and records every
+dialog with the rule that fired, so the run stays auditable.
+
 ### How it differs from the others
 
 | | Playwright (library) | chrome-devtools-mcp | jevnav |
@@ -270,6 +283,10 @@ trace that `jevnav replay --execute` can re-run in CI. Cost is about
 | regression evidence | trace viewer, re-run the test | none | **decision trace + offline replay that exits 1** |
 | outcome assertion | `expect(...)` | none | `--success` selector, verified or reported unverified |
 | engines | chromium, firefox, webkit | chromium | chromium, firefox, webkit (`--browser`) |
+| CPU throttling / Slow-3G | ✅ | ✅ | ✅ (chromium, CDP) |
+| request headers/body | ✅ | ✅ | ✅ `network_detail` |
+| multi-field form fill | ✅ | ✅ `fill_form` | ✅ `fill_form` (selector or intent) |
+| key combos | ✅ | ✅ `press_key` | ✅ `press_key` |
 | per-step cost | 0 | one LLM turn per step (~38k chars of snapshot) | **$0.00004** |
 
 jevnav is not a replacement for either: it is the acting + evidence layer an

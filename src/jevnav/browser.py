@@ -14,6 +14,7 @@ Chrome has locked.
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,11 +33,19 @@ class PageRecorder:
     only: it never feeds a decision and never reaches a trace's replay path.
     """
 
-    def __init__(self, page: Any, *, dialog_policy: str = "dismiss") -> None:
+    def __init__(
+        self,
+        page: Any,
+        *,
+        dialog_policy: str = "dismiss",
+    ) -> None:
         self.console: deque[dict[str, Any]] = deque(maxlen=RING)
         self.network: deque[dict[str, Any]] = deque(maxlen=RING)
         self.dialogs: deque[dict[str, Any]] = deque(maxlen=20)
         self.dialog_policy = dialog_policy
+        self.dialog_rules: list[tuple[str, str]] = []  # (message substring, accept|dismiss)
+        self.pending_dialog: Any = None
+        self.pending_deadline: float = 0.0
         page.on("console", self._console)
         page.on("pageerror", self._pageerror)
         page.on("response", self._response)
@@ -57,6 +66,8 @@ class PageRecorder:
                 "url": request.url[:300],
                 "status": response.status,
                 "resource": request.resource_type,
+                "request": request,
+                "response": response,
             }
         )
 
@@ -72,19 +83,74 @@ class PageRecorder:
         )
 
     def _dialog(self, dialog: Any) -> None:
-        record = {
-            "type": dialog.type,
-            "message": dialog.message[:300],
-            "action": self.dialog_policy,
-        }
+        """Answer a dialog inside the handler, where the sync API requires it.
+
+        Parking a dialog to ask a human later deadlocks the renderer (measured:
+        the next API call never returns), so the answer comes from a rule the
+        caller set in advance: first matching rule by message substring, else the
+        session policy. Either way the dialog is recorded.
+        """
+        message = dialog.message[:300]
+        action, source = self.dialog_policy, "policy"
+        for substring, rule_action in self.dialog_rules:
+            if substring.casefold() in message.casefold():
+                action, source = rule_action, f"rule:{substring}"
+                break
+        record = {"type": dialog.type, "message": message, "action": action, "source": source}
         self.dialogs.append(record)
         try:
-            if self.dialog_policy == "accept":
+            if action == "accept":
                 dialog.accept()
             else:
                 dialog.dismiss()
         except Exception:  # already handled by the page
             record["action"] = "gone"
+
+    def set_dialog_policy(self, action: str, *, match: str | None = None) -> dict[str, Any]:
+        """Set the session default, or a rule for dialogs whose text matches."""
+        if action not in {"accept", "dismiss"}:
+            raise ValueError("action must be accept or dismiss")
+        if match is None:
+            self.dialog_policy = action
+            return {"policy": action}
+        self.dialog_rules = [(sub, act) for sub, act in self.dialog_rules if sub != match]
+        self.dialog_rules.append((match, action))
+        return {"rule": {"match": match, "action": action}}
+
+    def due_dialog(self) -> Any:
+        """A parked dialog whose deadline passed is dismissed, not left hanging."""
+        if self.pending_dialog is None:
+            return None
+        if time.monotonic() < self.pending_deadline:
+            return self.pending_dialog
+        dialog, self.pending_dialog = self.pending_dialog, None
+        self.dialogs.append(
+            {"type": dialog.type, "message": dialog.message[:300], "action": "timeout-dismiss"}
+        )
+        try:
+            dialog.dismiss()
+        except Exception:
+            pass
+        return None
+
+    def resolve_dialog(self, action: str, text: str | None = None) -> dict[str, Any]:
+        dialog, self.pending_dialog = self.pending_dialog, None
+        if dialog is None:
+            return {"handled": False, "reason": "no dialog is waiting"}
+        if action == "accept" and dialog.type == "prompt" and text is not None:
+            dialog.accept(text)
+        elif action == "accept":
+            dialog.accept()
+        else:
+            dialog.dismiss()
+        record = {
+            "handled": True,
+            "type": dialog.type,
+            "message": dialog.message[:300],
+            "action": action,
+        }
+        self.dialogs.append(record)
+        return record
 
     def console_tail(self, limit: int = 20, only_errors: bool = False) -> list[dict[str, Any]]:
         items = list(self.console)
@@ -97,6 +163,46 @@ class PageRecorder:
         if only_failed:
             items = [item for item in items if item["status"] is None or item["status"] >= 400]
         return items[-limit:]
+
+    def network_detail(
+        self, *, index: int | None = None, url_contains: str | None = None
+    ) -> dict[str, Any]:
+        """Headers and (text) body for one recorded request, newest match first."""
+        entries = list(self.network)
+        if not entries:
+            raise RuntimeError("no requests recorded yet")
+        entry = None
+        if index is not None:
+            entry = entries[index]
+        elif url_contains:
+            for candidate in reversed(entries):
+                if url_contains in candidate["url"]:
+                    entry = candidate
+                    break
+            if entry is None:
+                raise RuntimeError(f"no recorded request matches {url_contains!r}")
+        else:
+            entry = entries[-1]
+        request, response = entry.get("request"), entry.get("response")
+        detail: dict[str, Any] = {
+            "url": entry["url"],
+            "method": entry["method"],
+            "status": entry["status"],
+            "resource": entry["resource"],
+            "request_headers": dict(request.all_headers()) if request else {},
+            "response_headers": dict(response.all_headers()) if response else {},
+        }
+        if request is not None and request.post_data:
+            detail["post_data"] = request.post_data[:4000]
+        if response is not None:
+            try:
+                body = response.text()
+                detail["body"] = body[:4000]
+                detail["body_truncated"] = len(body) > 4000
+            except Exception as error:  # binary or gone
+                detail["body"] = None
+                detail["body_note"] = f"{type(error).__name__}: {error}"[:120]
+        return detail
 
     def summary(self) -> dict[str, Any]:
         errors = self.console_tail(999, only_errors=True)
@@ -164,7 +270,10 @@ def browser_and_recorder(
             context = browser.contexts[0] if browser.contexts else browser.new_context()
             page = pick_attached_page(context)
             try:
-                yield page, attach(page, dialog_policy=dialog_policy)
+                yield (
+                    page,
+                    attach(page, dialog_policy=dialog_policy),
+                )
             finally:
                 browser.close()  # disconnects; the browser you attached to keeps running
             return
@@ -177,7 +286,10 @@ def browser_and_recorder(
             )
             page = context.pages[0] if context.pages else context.new_page()
             try:
-                yield page, attach(page, dialog_policy=dialog_policy)
+                yield (
+                    page,
+                    attach(page, dialog_policy=dialog_policy),
+                )
             finally:
                 context.close()
             return
@@ -185,7 +297,10 @@ def browser_and_recorder(
         try:
             context = browser.new_context(**context_options)
             page = context.new_page()
-            yield page, attach(page, dialog_policy=dialog_policy)
+            yield (
+                page,
+                attach(page, dialog_policy=dialog_policy),
+            )
         finally:
             browser.close()
     finally:
