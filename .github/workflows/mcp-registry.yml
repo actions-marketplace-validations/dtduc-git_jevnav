@@ -19,5 +19,17 @@ jobs:
           ./mcp-publisher --help >/dev/null
       - name: Publish server.json
         run: |
+          set -euo pipefail
           ./mcp-publisher login github-oidc || ./mcp-publisher login github
-          ./mcp-publisher publish
+          # the registry verifies package ownership against PyPI, and this job
+          # starts at the same moment as the PyPI publish: give it time to land
+          for attempt in 1 2 3 4 5 6; do
+            if ./mcp-publisher publish; then
+              echo "published on attempt $attempt"
+              exit 0
+            fi
+            echo "attempt $attempt failed (PyPI may not have the version yet); retrying in 20s"
+            sleep 20
+          done
+          echo "registry publish failed after 6 attempts" >&2
+          exit 1
