@@ -295,6 +295,11 @@ def cmd_play(args: argparse.Namespace) -> int:
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp import serve
 
+    if args.no_trace:
+        args.trace = None
+    elif not args.trace:
+        # audits are the point: a session traces by default, next to the client's cwd
+        args.trace = "jevnav-session.trace.jsonl"
     return serve(
         start=args.start,
         trace=args.trace,
@@ -418,8 +423,16 @@ def build_parser() -> argparse.ArgumentParser:
     play.set_defaults(func=cmd_play)
 
     mcp = sub.add_parser("mcp", help="serve jevnav as an MCP tool (needs jevnav[mcp])")
-    mcp.add_argument("--start", help="initial URL to open")
-    mcp.add_argument("--trace", help="record every decision to this trace")
+    mcp.add_argument(
+        "--start",
+        help="optional: open this URL at startup. Without it the agent calls goto(url) "
+        "itself, so one server serves every domain",
+    )
+    mcp.add_argument(
+        "--trace",
+        help="record every decision to this trace (default jevnav-session.trace.jsonl)",
+    )
+    mcp.add_argument("--no-trace", action="store_true", help="do not write a trace at all")
     mcp.add_argument("--gates", help="gates.yaml")
     mcp.add_argument("--model", default="jev-latest")
     mcp.add_argument("--headed", action="store_true")

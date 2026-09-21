@@ -213,3 +213,23 @@ def test_go_needs_well_formed_context(tmp_path, capsys, monkeypatch):
     code = cli.main(["go", "--goal", "x", "--start", loop_flow_url(), "--context", "oops"])
     assert code == 2
     assert "KEY=VALUE" in capsys.readouterr().err
+
+
+def test_mcp_traces_by_default_and_can_opt_out(monkeypatch, tmp_path):
+    from jevnav import cli as cli_module
+    from jevnav import mcp as mcp_module
+
+    captured = {}
+
+    def fake_serve(**kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(mcp_module, "serve", fake_serve)
+    monkeypatch.setattr(cli_module, "_client", lambda: FakeJev({}).client())
+    assert cli_module.main(["mcp"]) == 0
+    assert captured["trace"] == "jevnav-session.trace.jsonl"
+    assert captured["start"] is None
+    assert cli_module.main(["mcp", "--no-trace", "--start", "https://x.test"]) == 0
+    assert captured["trace"] is None
+    assert captured["start"] == "https://x.test"

@@ -196,8 +196,19 @@ page through Jev decisions instead of writing selectors:
 
 ```bash
 pip install "jevnav[mcp]"
-jevnav mcp --start https://app.example.com --trace session.trace.jsonl
+jevnav mcp          # that is the whole setup: no URL, no trace path, no flags
 ```
+
+No URL is needed: the agent opens pages itself with `goto(url)`, so **one server
+serves every domain** — a session can visit several sites, in several tabs. The
+session writes `jevnav-session.trace.jsonl` in the client's working directory by
+default (previous sessions are archived beside it, `--no-trace` opts out), so
+every session is auditable without configuring anything.
+
+`--start <url>` exists only as a convenience for a project-scoped config that
+always begins on one page; put it in that project's config, not in your global
+one. Same for the per-install choices: `--browser`, `--user-data-dir` (log in to
+any number of sites once, in one profile), `--cdp`, `--locale`, `--timezone`.
 
 Tools:
 
@@ -251,9 +262,7 @@ Code use; Claude Code also accepts
   "mcpServers": {
     "jevnav": {
       "command": "uvx",
-      "args": ["--from", "jevnav[mcp]", "jevnav", "mcp",
-               "--start", "https://app.example.com",
-               "--trace", "session.trace.jsonl"],
+      "args": ["--from", "jevnav[mcp]", "jevnav", "mcp"],
       "env": { "TYPESAFE_API_KEY": "..." }
     }
   }
