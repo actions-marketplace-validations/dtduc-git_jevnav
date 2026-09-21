@@ -194,11 +194,11 @@ CANDIDATE_JS = r"""
     });
   }
   const total = all.length;
-  all.forEach((c, i) => { c.dom_index = i; });
+  all.forEach((c, i) => { c.rank = i; });
   all.sort((a, b) =>
     Number(b.in_viewport) - Number(a.in_viewport) ||
     (ROLE_RANK[a.role] ?? 3) - (ROLE_RANK[b.role] ?? 3) ||
-    a.dom_index - b.dom_index);
+    a.rank - b.rank);
   const kept = all.slice(0, Math.min(LIMIT, 254));
   // clear every stamp first: an element that fell out of the shortlist used to
   // keep its old cid, so a later .first() could match it and act on the wrong node
@@ -213,7 +213,7 @@ CANDIDATE_JS = r"""
       cid: PREFIX + ':c' + (i + 1), role: c.role, name: c.name, tag: c.tag, type: c.type,
       href: c.href, placeholder: c.placeholder, scope: c.scope, value: c.value,
       disabled: c.disabled, in_viewport: c.in_viewport,
-      dom_index: i,
+      rank: i,
     })),
   };
 }
@@ -247,17 +247,18 @@ def candidate_key(candidate: dict[str, Any]) -> str:
 
 
 def global_order(candidate: dict[str, Any]) -> tuple:
-    """In-viewport first, then form controls before links, then frame and DOM order.
+    """In-viewport first, then form controls before links, then frame and shortlist rank.
 
-    The per-frame extractor already sorts its own list; this is the same rule
-    applied across frames so the *cap* keeps the most actionable elements of the
-    whole page rather than the whole of the first frame.
+    ``rank`` is the element's position in its frame's shortlist (DOM order within
+    the ``(in_viewport, role)`` group), not a DOM index — the same rule the
+    per-frame extractor applies, now across frames so the *cap* keeps the most
+    actionable elements of the whole page rather than the whole of the first frame.
     """
     return (
         0 if candidate.get("in_viewport") else 1,
         ROLE_RANK.get(candidate["role"], 3),
         candidate.get("frame", 0),
-        candidate.get("dom_index", 0),
+        candidate.get("rank", 0),
     )
 
 
@@ -297,7 +298,7 @@ def extract(page: Any, limit: int | None = None) -> tuple[list[dict[str, Any]], 
                     disabled=item["disabled"],
                     in_viewport=item["in_viewport"],
                     frame=frame_index,
-                    dom_index=item.get("dom_index", 0),
+                    rank=item.get("rank", 0),
                 )
             )
     collected.sort(key=global_order)
