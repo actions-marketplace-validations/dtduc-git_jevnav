@@ -420,8 +420,9 @@ Loop mode also sends a short digest of the page's visible text (it is how the
 model judges whether the goal is done) and the current value of form fields
 (passwords masked) — that is what any browser agent has to observe. Scripted
 flows send neither. Literal `value`s from the flow are recorded (they are already in
-your repo); `${ENV}` values are recorded as the variable name only. Traces are
-gitignored by default; audit one before sharing it.
+your repo); `${ENV}` values are recorded as the variable name only. Add
+`*.trace.jsonl` to your project's `.gitignore` (jevnav's own repo does), and
+audit a trace before sharing it.
 
 ## Suite
 
