@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,22 @@ from .page import by_cid, execute, extract, locator_for
 from .trace import TraceWriter
 
 TRACE_DIR_OPTION = "--jev-trace-dir"
+
+
+def env_name_for_value(value: str, *, min_length: int = 8) -> str | None:
+    """The name of an environment variable that already holds this exact value.
+
+    ``os.environ["TOKEN"]`` is the idiomatic way to pass a secret in a test, and
+    the literal would land in the committed trace verbatim. A value that is
+    already in the environment is recorded by name instead, like ``${TOKEN}``.
+    Short values are skipped: matching ``"true"`` or ``"/tmp"`` would be noise.
+    """
+    if len(value) < min_length:
+        return None
+    for name, current in sorted(os.environ.items()):
+        if current == value:
+            return name
+    return None
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -115,6 +132,28 @@ class JevNavigator:
         from .decide import ask
 
         self.step += 1
+        payload: dict[str, Any] = {"type": action}
+        action_record: dict[str, Any] = {"type": action}
+        if value is not None:
+            # Resolve before the extraction and the decision: a missing ${VAR}
+            # must fail the test, not cost a paid model call first.
+            resolved, env_name = context_value(value)
+            payload["value"] = resolved
+            if env_name is None:
+                env_name = env_name_for_value(resolved)
+                if env_name:
+                    warnings.warn(
+                        f"the {action} value for {intent!r} is the value of ${env_name}; "
+                        f'the trace records the name only — write "${{{env_name}}}" to say so',
+                        stacklevel=3,
+                    )
+            if env_name:
+                action_record["value_from_env"] = env_name
+            else:
+                action_record["value"] = resolved
+        if key is not None:
+            payload["key"] = key
+            action_record["key"] = key
         candidates, total, dropped = extract(self.page)
         decision = ask(
             self.client,
@@ -130,20 +169,6 @@ class JevNavigator:
         gate, reason = verdict(
             decision, intent=intent, candidate=chosen, dropped=dropped, gates=self.gates
         )
-        payload: dict[str, Any] = {"type": action}
-        if value is not None:
-            value, env_name = context_value(value)
-            payload["value"] = value
-            action_record: dict[str, Any] = (
-                {"type": action, "value_from_env": env_name}
-                if env_name
-                else {"type": action, "value": value}
-            )
-        else:
-            action_record = {"type": action}
-        if key is not None:
-            payload["key"] = key
-            action_record["key"] = key
         record: dict[str, Any] = {
             "step": self.step,
             "intent": intent,

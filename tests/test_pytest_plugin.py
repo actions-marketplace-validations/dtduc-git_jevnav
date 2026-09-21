@@ -66,6 +66,32 @@ def test_an_env_value_is_traced_by_name_only_and_replays(navigator, app_url, pag
     assert result["failed"] == []
 
 
+def test_an_env_literal_is_traced_by_name_with_a_warning(navigator, app_url, monkeypatch):
+    """os.environ[...] is the idiomatic reflex; it must not leak the value."""
+    monkeypatch.setenv("DEMO_PASSWORD", "hunter2-super-secret")
+    jev, writer = navigator
+    jev.goto(app_url)
+    with pytest.warns(UserWarning, match="DEMO_PASSWORD"):
+        jev.fill("the password field", "hunter2-super-secret")
+    assert jev.page.locator("#login-password").input_value() == "hunter2-super-secret"
+    writer.close()
+    assert "hunter2-super-secret" not in writer.path.read_text()
+    _, steps = read_trace(writer.path)
+    assert steps[0]["action"] == {"type": "fill", "value_from_env": "DEMO_PASSWORD"}
+
+
+def test_a_missing_env_value_fails_before_the_paid_call(page, tmp_path, app_url, monkeypatch):
+    monkeypatch.delenv("ACME_PASSWORD", raising=False)
+    fake = FakeJev({"password": "Password"})
+    writer = TraceWriter(tmp_path / "missing.trace.jsonl", flow="pytest:missing")
+    jev = JevNavigator(page, fake.client(), writer, gates=default_gates())
+    jev.goto(app_url)
+    with pytest.raises(KeyError, match="ACME_PASSWORD"):
+        jev.fill("the password field", "${ACME_PASSWORD}")
+    assert fake.calls == []  # the decision was never requested
+    writer.close()
+
+
 def test_clearing_a_field_is_recorded_and_replays(navigator, app_url, page):
     from jevnav.replay import replay_trace
 
