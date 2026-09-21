@@ -17,7 +17,7 @@ import random
 import time
 from typing import Any
 
-from .decide import DEFAULT_MODEL, failed_decision
+from .decide import DEFAULT_MODEL, INPUT_USD_PER_MTOK, failed_decision
 from .trace import NullWriter, TraceWriter, dom_hash
 
 MAX_STATE_CHARS = 1200
@@ -102,7 +102,7 @@ def play(
                     "model": response.get("model") or model,
                     "latency_ms": round(latency_ms, 1),
                     "usage": usage,
-                    "cost_usd": (usage.get("input_tokens") or 0) * 0.042 / 1_000_000,
+                    "cost_usd": (usage.get("input_tokens") or 0) * INPUT_USD_PER_MTOK / 1_000_000,
                     "error": None,
                 }
             except Exception as error:

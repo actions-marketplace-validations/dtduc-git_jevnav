@@ -147,6 +147,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             swap=args.swap,
             execute=args.execute,
             settle_ms=args.settle_ms,
+            normalize=args.normalize,
         )
     report = render_replay_report(result)
     if args.report:
@@ -364,6 +365,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay.add_argument("--execute", action="store_true", help="also re-run the recorded actions")
     replay.add_argument("--settle-ms", type=int, default=300)
+    replay.add_argument(
+        "--normalize",
+        action="append",
+        metavar="REGEX",
+        help="relax fingerprint matching in replay (e.g. '\\(\\d+\\)' for counters); repeatable",
+    )
     replay.add_argument("--report", help="write a markdown report here")
     add_browser_flags(replay)
     replay.add_argument("--json", action="store_true")
@@ -482,6 +489,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="record every decision to this trace (default jevnav-session.trace.jsonl)",
     )
     mcp.add_argument("--no-trace", action="store_true", help="do not write a trace at all")
+    mcp.add_argument(
+        "--no-eval",
+        action="store_true",
+        help="refuse read_js: closes the untraced JavaScript read channel",
+    )
     mcp.add_argument("--gates", help="gates.yaml")
     mcp.add_argument("--model", default="jev-latest")
     mcp.add_argument("--headed", action="store_true")

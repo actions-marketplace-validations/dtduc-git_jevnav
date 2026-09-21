@@ -281,7 +281,8 @@ Code use; Claude Code also accepts
 ```
 
 Why an agent would: it does not need its own Playwright MCP, it cannot click a
-`Delete` by accident (`review` never executes), and its whole session is a
+`Delete` by accident (`review` never executes; risky-action patterns ship for
+nine languages, and extend them in `gates.yaml`), and its whole session is a
 trace that `jevnav replay --execute` can re-run in CI. Cost is about
 **$0.00004 and 330ms per step**; `page_state` and `goto` are free.
 
@@ -298,8 +299,8 @@ dialog with the rule that fired, so the run stays auditable.
 | | Playwright (library) | chrome-devtools-mcp | jevnav |
 |---|---|---|---|
 | who picks the element | a human writes selectors | the LLM, from a snapshot | **Jev**, with a calibrated probability |
-| scope | the full test-authoring API | 29 tools, primitives + profiling | 27 tools, intent-level acting + observation |
-| risky actions | whatever the test says | whatever the LLM says | **never executed** until a human says so |
+| scope | the full test-authoring API | 29 tools, primitives + profiling | 33 tools, intent-level acting + observation |
+| risky actions | whatever the test says | whatever the LLM says | **never executed** until a human says so (risky patterns cover English, Vietnamese, German, French, Spanish, Portuguese, Japanese, Chinese and Korean) |
 | regression evidence | trace viewer, re-run the test | none | **decision trace + offline replay that exits 1** |
 | outcome assertion | `expect(...)` | none | `--success` selector, verified or reported unverified |
 | engines | chromium, firefox, webkit | chromium | chromium, firefox, webkit (`--browser`) |
@@ -368,7 +369,9 @@ floating tag; pin `@v0.1.1` if you prefer.
   shown to the model, so replay never re-derives identity with new code.
 - **Decisions.** One choice question per step: the option map is the candidate
   list, plus `none`. The decision is recorded with probabilities, usage and cost.
-- **Replay.** Re-extract the page, compare fingerprints. `ok` (found),
+- **Replay.** Re-extract the page, compare fingerprints. `--normalize REGEX`
+  relaxes matching for known churn (a counter like "Cart (3)" → "Cart (4)") on
+  both sides, opt-in, so strict is still the default. `ok` (found),
   `moved` (found elsewhere on the page), `changed` (gone), `ambiguous` (now
   duplicated), `error`. `changed`, `ambiguous` and `error` fail; `moved` and
   drift counts are reported.

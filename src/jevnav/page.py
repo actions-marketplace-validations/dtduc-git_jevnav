@@ -94,6 +94,13 @@ CANDIDATE_JS = r"""
       return (el.getAttribute('placeholder') || el.getAttribute('title') ||
               el.getAttribute('name') || el.getAttribute('id') || '').trim() || textOf(el);
     }
+    // an icon-only control still has a name: the icon's alt, an svg title, or title
+    const iconAlt = el.querySelector('img[alt]');
+    if (iconAlt && iconAlt.getAttribute('alt').trim()) return iconAlt.getAttribute('alt').trim();
+    const svgTitle = el.querySelector('svg > title, svg title');
+    if (svgTitle && textOf(svgTitle)) return textOf(svgTitle);
+    const title = el.getAttribute('title');
+    if (title && title.trim()) return title.trim();
     return textOf(el);
   };
 
@@ -184,6 +191,9 @@ CANDIDATE_JS = r"""
     (ROLE_RANK[a.role] ?? 3) - (ROLE_RANK[b.role] ?? 3) ||
     a.dom_index - b.dom_index);
   const kept = all.slice(0, Math.min(LIMIT, 254));
+  // clear every stamp first: an element that fell out of the shortlist used to
+  // keep its old cid, so a later .first() could match it and act on the wrong node
+  for (const el of document.querySelectorAll('[data-jevcid]')) el.removeAttribute('data-jevcid');
   kept.forEach((c, i) => c.el.setAttribute('data-jevcid', 'c' + (i + 1)));
   return {
     total,
@@ -256,16 +266,46 @@ def locator_for(page: Any, candidate: dict[str, Any]) -> tuple[str, bool]:
     return selector, count == 1
 
 
-def resolve(page: Any, cid: str, *, timeout_ms: int = 10_000) -> Any:
-    """The element extraction stamped for this decision — exact, unambiguous."""
-    locator = page.locator(f'[data-jevcid="{cid}"]').first
+def locator_by_fp(page: Any, fp: str, *, timeout_ms: int = 10_000) -> Any:
+    """The single element with this fingerprint right now, or a loud failure.
+
+    Identity is the fingerprint everywhere else (decisions, traces, replay), so
+    acting must use it too: a position-based lookup can silently point at an
+    element that only *used* to be the chosen one.
+    """
+    candidates, _, _ = extract(page)
+    matches = [c for c in candidates if c["fp"] == fp]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"cannot act: {len(matches)} candidates match {fp!r} (expected exactly one)"
+        )
+    locator = page.locator(f'[data-jevcid="{matches[0]["cid"]}"]')
+    if locator.count() != 1:
+        raise RuntimeError(f"cannot act: the stamp for {fp!r} is not unique on the page")
     locator.wait_for(state="attached", timeout=timeout_ms)
     return locator
 
 
-def execute(page: Any, cid: str, action: dict[str, Any], *, settle_ms: int = 300) -> None:
-    """Perform the recorded action on the chosen element, then let the DOM settle."""
-    element = resolve(page, cid)
+def resolve(page: Any, cid: str, *, timeout_ms: int = 10_000) -> Any:
+    """A stamped element by cid — refuses when the stamp is not unique."""
+    locator = page.locator(f'[data-jevcid="{cid}"]')
+    if locator.count() != 1:
+        raise RuntimeError(f"cannot resolve {cid!r}: {locator.count()} elements carry that stamp")
+    locator = locator.first
+    locator.wait_for(state="attached", timeout=timeout_ms)
+    return locator
+
+
+def execute(
+    page: Any, candidate: dict[str, Any], action: dict[str, Any], *, settle_ms: int = 300
+) -> None:
+    """Perform an action on a candidate, resolved by fingerprint, then let the DOM settle."""
+    execute_fp(page, candidate["fp"], action, settle_ms=settle_ms)
+
+
+def execute_fp(page: Any, fp: str, action: dict[str, Any], *, settle_ms: int = 300) -> None:
+    """Execute an action against the element with this fingerprint, not this position."""
+    element = locator_by_fp(page, fp)
     kind = action.get("type", "click")
     if kind == "click":
         element.click()
@@ -285,19 +325,6 @@ def execute(page: Any, cid: str, action: dict[str, Any], *, settle_ms: int = 300
         raise ValueError(f"unknown action type {kind!r}")
     if settle_ms:
         page.wait_for_timeout(settle_ms)
-
-
-def execute_fp(page: Any, fp: str, action: dict[str, Any], *, settle_ms: int = 300) -> None:
-    """Execute an action against the element with this fingerprint, not this position.
-
-    Replay must never act on a shifted candidate: if the fingerprint is gone or
-    duplicated, this raises instead of clicking the wrong thing.
-    """
-    candidates, _, _ = extract(page)
-    matches = [c for c in candidates if c["fp"] == fp]
-    if len(matches) != 1:
-        raise RuntimeError(f"cannot execute: {len(matches)} candidates match {fp!r}")
-    execute(page, matches[0]["cid"], action, settle_ms=settle_ms)
 
 
 OUTLINE_JS = r"""(args) => {

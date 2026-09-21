@@ -12,6 +12,7 @@ Verdicts per step: ``ok`` | ``moved`` | ``changed`` | ``ambiguous`` | ``error``.
 from __future__ import annotations
 
 import os
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,24 @@ ERROR = "error"
 FAILING = {CHANGED, AMBIGUOUS, ERROR}
 
 
+def normalize_fp(fp: str, patterns: list[str] | None) -> str:
+    """Relax a fingerprint for matching only: the trace keeps the recorded one.
+
+    Opt-in, because stripping digits also merges elements the strict comparison
+    would keep apart ("Cart (3)"/"Cart (4)" is churn; "item 3"/"item 4" is not).
+    """
+    for pattern in patterns or []:
+        fp = re.sub(pattern, "", fp)
+    return " ".join(fp.split())
+
+
 def replay_step(
-    page: Any, step: dict[str, Any], *, url: str | None = None, force_navigate: bool = False
+    page: Any,
+    step: dict[str, Any],
+    *,
+    url: str | None = None,
+    force_navigate: bool = False,
+    normalize: list[str] | None = None,
 ) -> dict[str, Any]:
     """Re-resolve one recorded decision against the page as it is now."""
     target = url or step["url"]
@@ -75,7 +92,11 @@ def replay_step(
         result["verdict"] = ERROR
         result["reason"] = f"trace is inconsistent: choice {choice!r} is not in the candidate list"
         return result
-    matches = [i for i, c in enumerate(current) if c["fp"] == chosen["fp"]]
+    matches = [
+        i
+        for i, c in enumerate(current)
+        if normalize_fp(c["fp"], normalize) == normalize_fp(chosen["fp"], normalize)
+    ]
     if not matches:
         result["verdict"] = CHANGED
         result["reason"] = (
@@ -101,6 +122,7 @@ def replay_trace(
     swap: str | Path | None = None,
     execute: bool = False,
     settle_ms: int = 300,
+    normalize: list[str] | None = None,
 ) -> dict[str, Any]:
     """Replay every step of a trace. ``swap`` points all steps at one local file."""
     run, steps = read_trace(trace_path)
@@ -111,7 +133,7 @@ def replay_trace(
     results: list[dict[str, Any]] = []
     for index, step in enumerate(steps):
         target = swap_url or portable_url(step["url"], base_dir)
-        result = replay_step(page, step, url=target, force_navigate=index == 0)
+        result = replay_step(page, step, url=target, force_navigate=index == 0, normalize=normalize)
         if execute and result["verdict"] in {OK, MOVED}:
             try:
                 action = action_for_replay(step["action"])
@@ -150,6 +172,7 @@ def replay_trace(
     return {
         "trace": str(trace_path),
         "goal": run.get("goal"),
+        "normalize": normalize or [],
         "swapped": str(swap) if swap else None,
         "steps": len(results),
         "counts": dict(counts),

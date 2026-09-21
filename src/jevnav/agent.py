@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from . import page as page_module
-from .decide import DEFAULT_MODEL, failed_decision
+from .decide import DEFAULT_MODEL, INPUT_USD_PER_MTOK, failed_decision
 from .flow import recorded_url
-from .gates import AUTO, verdict
+from .gates import verdict
 from .trace import NullWriter, TraceWriter, describe_options, dom_hash
 
 STATUSES = ("in_progress", "done", "stuck")
@@ -230,7 +230,7 @@ def run_goal(
                 "model": response.get("model") or model,
                 "latency_ms": round(latency_ms, 1),
                 "usage": usage,
-                "cost_usd": (usage.get("input_tokens") or 0) * 0.042 / 1_000_000,
+                "cost_usd": (usage.get("input_tokens") or 0) * INPUT_USD_PER_MTOK / 1_000_000,
                 "error": None,
             }
         except Exception as error:
@@ -252,8 +252,6 @@ def run_goal(
             default_key="loop_min_confidence",
             min_confidence=min_confidence,
         )
-        if gate != AUTO and decision.get("choice") in (None, "none"):
-            gate, gate_reason = "blocked", gate_reason
         record: dict[str, Any] = {
             "step": step,
             "intent": goal,
@@ -334,7 +332,7 @@ def run_goal(
             action_dict["key"] = "Enter"
         if not dry_run:
             try:
-                page_module.execute(page, chosen["cid"], action_dict, settle_ms=settle_ms)
+                page_module.execute(page, chosen, action_dict, settle_ms=settle_ms)
                 record["result"]["executed"] = True
             except Exception as error:
                 record["result"]["error"] = f"{type(error).__name__}: {error}"

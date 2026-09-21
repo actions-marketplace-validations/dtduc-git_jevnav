@@ -182,11 +182,13 @@ class Session:
         locale: str | None = None,
         timezone: str | None = None,
         user_agent: str | None = None,
+        allow_eval: bool = True,
     ) -> None:
         from .cli import _client
 
         self.gates = load_gates(gates)
         self.model = model
+        self.allow_eval = allow_eval
         self.client = client or _client()
         self.browser: BrowserThread | None = None
         self.page = page
@@ -259,6 +261,8 @@ class Session:
 
     def read_js(self, expression: str) -> Any:
         """Evaluate JS in the page and return it (observation; not traced)."""
+        if not self.allow_eval:
+            raise RuntimeError("read_js is disabled (started with --no-eval)")
         return self.on_page(lambda page: page.evaluate(expression))
 
     def wait_for(
@@ -374,7 +378,7 @@ class Session:
                         raise RuntimeError("no file input matched the intent")
                 else:
                     chosen = files[0]
-                locator = page.locator(f'[data-jevcid="{chosen["cid"]}"]').first
+                locator = page_module.locator_by_fp(page, chosen["fp"])
             locator.set_input_files(paths)
             return locator.get_attribute("aria-label") or "file input"
 
@@ -779,7 +783,7 @@ class Session:
             try:
                 page_module.execute(
                     page,
-                    chosen["cid"],
+                    chosen,
                     action_runtime(
                         {"action": action, **({"value": value} if value is not None else {})}
                     ),
@@ -873,6 +877,7 @@ def serve(
     locale: str | None = None,
     timezone: str | None = None,
     user_agent: str | None = None,
+    allow_eval: bool = True,
 ) -> int:
     try:
         server_class()
@@ -893,6 +898,7 @@ def serve(
         locale=locale,
         timezone=timezone,
         user_agent=user_agent,
+        allow_eval=allow_eval,
     )
     mcp = server_class()("jevnav")
 

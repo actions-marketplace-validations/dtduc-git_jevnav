@@ -181,3 +181,26 @@ def test_load_gates_reads_overrides(tmp_path):
     assert gates["min_confidence"] == 0.8
     assert gates["risky"] == []
     assert threshold_for("pay the invoice", gates) == 0.99
+
+
+def test_risky_patterns_are_not_english_only():
+    gates = default_gates()
+    for intent in (
+        "xoá tài khoản của tôi",
+        "Xóa tài khoản",
+        "konto löschen",
+        "supprimer le compte",
+        "eliminar la cuenta",
+        "アカウントを削除",
+        "删除账户",
+        "계정 삭제",
+    ):
+        assert risk_match(intent, None, gates), intent
+
+
+def test_a_caller_cannot_lower_the_bar_to_zero():
+    from jevnav.gates import MIN_CONFIDENCE_FLOOR
+
+    gates = default_gates()
+    assert threshold_for("save", gates, override=0.0) == MIN_CONFIDENCE_FLOOR
+    assert threshold_for("save", gates, override=0.9) == 0.9

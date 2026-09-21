@@ -29,6 +29,9 @@ DEFAULT_MIN_CONFIDENCE = 0.9
 # is kept safe by role/value validation, progress detection, the risky patterns
 # and the success verification, not by a high threshold.
 DEFAULT_LOOP_MIN_CONFIDENCE = 0.5
+# A caller may lower its own bar, but not to zero: an LLM passing 0 turned the
+# gate into "no risky regex matched, so run". Risky patterns still always win.
+MIN_CONFIDENCE_FLOOR = 0.3
 DEFAULT_RISKY = [
     r"\b(delete|remove|destroy|drop)\b",
     r"\b(pay|payment|purchase|buy|checkout|transfer|withdraw|refund)\b",
@@ -37,6 +40,16 @@ DEFAULT_RISKY = [
     r"\b(confirm|approve|authorize|grant|revoke)\b",
     r"\b(close|deactivate|terminate|downgrade|unsubscribe|cancel)\b.*\b(account|subscription|plan|workspace)\b",
     r"\b(rotate|reset|delete)\b.*\b(key|token|credential|secret|password)\b",
+    # the same actions in the languages real UIs are written in: English-only
+    # patterns meant the gate quietly became "p >= threshold" on those pages
+    r"(xoá|xóa|hủy|xoa tai khoan|đóng tài khoản|thanh toán|chuyển tiền|hoàn tiền)",
+    r"(löschen|entfernen|konto schließen|bezahlen|kaufen|überweisen|erstatten)",
+    r"(supprimer|effacer|fermer le compte|payer|acheter|virement|rembourser)",
+    r"(eliminar|borrar|cerrar la cuenta|pagar|comprar|transferir|reembolsar)",
+    r"(excluir|apagar|encerrar a conta|pagar|comprar|transferir|reembolsar)",
+    r"(削除|消去|アカウントを削除|支払|購入|送金|返金)",
+    r"(删除|删除账户|关闭账户|支付|付款|购买|转账|退款)",
+    r"(삭제|계정 삭제|결제|구매|송금|환불)",
 ]
 
 # Real pages exceed the candidate cap routinely (Wikipedia's main page drops
@@ -94,7 +107,7 @@ def threshold_for(
     knows the page best.
     """
     if override is not None:
-        return float(override)
+        return max(float(override), MIN_CONFIDENCE_FLOOR)
     best: tuple[int, float] | None = None
     for pattern, overrides in gates.get("intents", {}).items():
         if fnmatch.fnmatch(intent.casefold(), pattern.casefold()):

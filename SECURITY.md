@@ -56,6 +56,18 @@ duplicated, so a shifted page cannot be clicked by position.
 The browser is launched fresh per run (a clean profile, no stored cookies) and
 is never pointed at a site you did not put in a flow or an MCP session.
 
+## `read_js` is a read channel, and it is not traced
+
+`read_js` runs arbitrary JavaScript in the page and returns the value. That is
+exactly what it is for — and with `--cdp` attached to your own Chrome it can read
+anything that browser is logged into: cookies, `localStorage`, tokens, the DOM of
+any open app. Decisions and actions are traced; **observation tools are not**, by
+design (see SPEC). If you want that channel closed, start the server with
+`--no-eval`: `read_js` then refuses every call, and the rest of jevnav works
+unchanged. Files, screenshots, heap snapshots and Playwright traces written by
+jevnav land wherever you pointed them — keep them out of shared machines if the
+sites you drive are sensitive.
+
 ## Scope
 
 jevnav drives a browser and can therefore do anything a browser can do on the

@@ -110,7 +110,10 @@ For each step, in order:
    (`page_identical`).
 
 `changed`, `ambiguous` and `error` fail the replay (exit code 1). `moved` and
-drift do not fail: cosmetic churn is reported, not punished.
+drift do not fail: cosmetic churn is reported, not punished. A name that changes
+every deploy (a counter, an unread badge) is still a `changed`; `--normalize
+REGEX` relaxes the comparison on both sides for those, opt-in and recorded in
+the replay result.
 
 With `--execute`, recorded actions are re-run after a successful resolution.
 Actions are resolved by **fingerprint**, never by position, and an action whose
@@ -152,6 +155,17 @@ unattended:
 Verdicts: `auto` (act), `review` (a human confirms first), `blocked` (no
 decision was possible: `none`, or the model call failed). `blocked` and
 `review` never execute an action.
+
+The caller may lower the confidence bar (`browse(min_confidence=…)`,
+`go --min-confidence`), never below `MIN_CONFIDENCE_FLOOR` (0.3): an LLM passing
+zero would otherwise turn the gate into "no risky pattern matched, so run". The
+risk patterns ship in English, Vietnamese, German, French, Spanish, Portuguese,
+Japanese, Chinese and Korean; extend them per flow in `gates.yaml`.
+
+Acting resolves by **fingerprint**, never by position: `execute` re-extracts and
+requires exactly one candidate with the chosen fingerprint, and `[data-jevcid]`
+stamps are cleared before every extraction (a stale stamp used to make a
+position-based lookup click a different element silently).
 
 ## Goal loop (`jevnav go`, MCP `goal`)
 

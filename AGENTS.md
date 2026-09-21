@@ -52,6 +52,10 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
   the handler, and a parked dialog blocks the renderer (measured: the next call
   never returned). They are answered by `dialog_policy` rules set in advance and
   always recorded. Do not reintroduce a "park and ask" path.
+- Identity is the fingerprint everywhere: decisions, traces, replay *and*
+  execution. `execute` takes a candidate and resolves by fingerprint with a
+  uniqueness check; never reintroduce a position-based lookup (a stale
+  `data-jevcid` once made a click land on a different element, silently).
 - Side tools (screenshot, upload, drag, resize, emulate, route, trace, perf, heap,
   lighthouse) are observation/acting conveniences for the caller. They must never
   enter the decision path, the gate, or a replay, and they are not written to a

@@ -390,3 +390,11 @@ def test_the_default_style_props_cover_the_visual_basics(page, tmp_path):
     styles = session.styles("p")["elements"][0]["styles"]
     assert {"display", "font-size", "color", "background-color"} <= set(styles)
     session.close()
+
+
+def test_no_eval_closes_the_read_js_channel(page, tmp_path):
+    session = make_session(page, tmp_path, allow_eval=False)
+    page.set_content("<p>hi</p>")
+    with pytest.raises(RuntimeError, match="no-eval"):
+        session.read_js("document.title")
+    session.close()

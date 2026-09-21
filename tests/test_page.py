@@ -108,7 +108,7 @@ def test_execute_clicks_the_chosen_element_only(page, app_url):
     )
     candidates, _, _ = extract(page)
     sign_in = by_name(candidates, "Sign in")
-    page_module.execute(page, sign_in["cid"], {"type": "click"}, settle_ms=0)
+    page_module.execute(page, sign_in, {"type": "click"}, settle_ms=0)
     assert page.evaluate("window.clicked") == 1
 
 
@@ -150,3 +150,59 @@ def test_a_filled_field_is_visible_in_the_model_description(page, app_url):
     from jevnav.trace import describe
 
     assert '[value: "demo@example.com"]' in describe(by_name(candidates, "Email"))
+
+
+def test_stale_stamps_cannot_steal_a_decision(page):
+    """Regression for the silent wrong click: stamps must not survive an extraction.
+
+    Reproduces the reported case: a shortlist with dropped elements, then a
+    scroll changes which elements are in view, then the chosen candidate is
+    executed. The click must land on the chosen element, not on a stale stamp.
+    """
+    page.set_viewport_size({"width": 800, "height": 600})
+    page.set_content(
+        '<a id=L1 href="#one" style="display:block;height:40px">Go to docs</a>'
+        '<div style="height:1400px"></div>'
+        "<button id=B1 onclick=\"window.clicked='B1'\">Delete account</button>"
+        "<button id=B2 onclick=\"window.clicked='B2'\">Keep account</button>"
+    )
+    first, _, dropped_first = extract(page, limit=2)
+    assert dropped_first > 0
+    page.evaluate("window.scrollTo(0, 1400)")
+    second, _, _ = extract(page, limit=2)
+    for candidate in second:
+        assert page.locator(f'[data-jevcid="{candidate["cid"]}"]').count() == 1
+    chosen = by_name(second, "Delete account")
+    page_module.execute(page, chosen, {"type": "click"}, settle_ms=50)
+    assert page.evaluate("window.clicked") == "B1"
+    assert not page.url.endswith("#one")
+    assert first  # the first shortlist is unused, kept for the report
+
+
+def test_executing_a_duplicated_fingerprint_refuses_loudly(page, tmp_path):
+    path = tmp_path / "dupes.html"
+    path.write_text("<html><body><button>Send</button><button>Send</button></body></html>")
+    page.goto(path.as_uri())
+    candidates, _, _ = extract(page)
+    duplicated = by_name(candidates, "Send")
+    with pytest.raises(RuntimeError, match="2 candidates match"):
+        page_module.execute(page, duplicated, {"type": "click"}, settle_ms=0)
+
+
+def test_icon_only_controls_still_get_a_name(page, tmp_path):
+    path = tmp_path / "icons.html"
+    path.write_text(
+        "<html><body>"
+        '<button title="Close dialog"></button>'
+        '<a href="#home"><img alt="Home"></a>'
+        "<button><svg><title>Save</title></svg></button>"
+        '<a href="#x"><img alt=""></a>'
+        "</body></html>"
+    )
+    page.goto(path.as_uri())
+    candidates, _, _ = extract(page)
+    names = {c["name"] for c in candidates}
+    assert "Close dialog" in names  # title attribute
+    assert "Home" in names  # img alt inside the link
+    assert "Save" in names  # svg title inside the button
+    assert len(candidates) == 3  # the empty-alt link stays out

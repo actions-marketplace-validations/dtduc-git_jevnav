@@ -226,7 +226,7 @@ def run_flow(
         }
         if gate == AUTO and not dry_run:
             try:
-                page_module.execute(page, chosen["cid"], action_runtime(step), settle_ms=settle)
+                page_module.execute(page, chosen, action_runtime(step), settle_ms=settle)
                 record["result"]["executed"] = True
             except Exception as error:
                 record["result"]["error"] = f"{type(error).__name__}: {error}"

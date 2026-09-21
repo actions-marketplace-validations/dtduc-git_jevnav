@@ -3,6 +3,7 @@ from helpers import FakeJev
 
 from jevnav.flow import load_flow, run_flow
 from jevnav.gates import default_gates
+from jevnav.page import extract
 from jevnav.replay import action_for_replay, replay_step, replay_trace
 from jevnav.trace import TraceWriter, read_trace
 
@@ -245,3 +246,28 @@ def test_replay_verifies_a_recorded_success_selector(tmp_path, page):
     with_execute = replay_trace(path, page=page, execute=True, settle_ms=0)
     assert with_execute["success"] == {"selector": "#signed-in-as", "verified": True}
     assert with_execute["failed"] == []
+
+
+def test_normalize_relaxes_counter_churn_but_stays_opt_in(tmp_path, page):
+    """'Cart (3)' -> 'Cart (4)' after a deploy is churn; only --normalize may ignore it."""
+    site = tmp_path / "cart.html"
+    site.write_text("<html><body><button id=b>Cart (3)</button></body></html>")
+    trace_path = tmp_path / "churn.trace.jsonl"
+    page.goto(site.as_uri())
+    candidates, _, _ = extract(page)
+    with TraceWriter(trace_path, flow="x") as writer:
+        writer.step(
+            step=1,
+            intent="open the cart",
+            url=page.url,
+            title="t",
+            candidates=candidates,
+            decision={"choice": candidates[0]["cid"], "confidence": 0.99},
+        )
+    site.write_text("<html><body><button id=b>Cart (4)</button></body></html>")  # the "deploy"
+    strict = replay_trace(trace_path, page=page)
+    assert strict["failed"] == [1]  # without the flag, churn is still a change
+    relaxed = replay_trace(trace_path, page=page, normalize=[r"\(\d+\)"])
+    assert relaxed["failed"] == []
+    assert relaxed["results"][0]["verdict"] == "ok"
+    assert relaxed["normalize"] == [r"\(\d+\)"]
