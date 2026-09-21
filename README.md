@@ -509,11 +509,12 @@ outcome verified.
 On real pages (`research/browser-element-selection.md`, 30 hand-labelled cases
 across 8 public sites, one decision each, model `jev-1.13.0`):
 
-- **25/26 scored cases correct (96.2%)**; 18 ran at `p >= 0.9` and **all 18 were
-  right**; the single miss answered at `p=0.57` and went to review.
-- 321ms p50, **$0.000155 per decision**.
-- Small n, single annotator, well-built pages: a direction, not a proof. The
-  cases, the runner and the excluded-case log are all in the repo.
+- **41/41 scored cases correct**; 30 ran at `p >= 0.9` and **all 30 were right**.
+- 365ms p50, **$0.000153 per decision**.
+- 71 cases are written, but only 41 scored: the harness refuses labels whose
+  selector matches zero or several visible elements, and 30 of mine did. Small n,
+  single annotator, well-built pages: a direction, not a proof. The cases, the
+  runner and the excluded-case log are all in the repo.
 
 The build-time element-decision spike (44 decisions: local fixtures, Hacker News,
 PyPI, Wikipedia):

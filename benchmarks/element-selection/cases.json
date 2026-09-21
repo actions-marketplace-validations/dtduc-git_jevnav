@@ -178,5 +178,251 @@
     "url": "https://docs.python.org/3/",
     "intent": "Open the standard library reference",
     "expect": "a[href='library/index.html']"
+  },
+  {
+    "id": "hn-guidelines",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Read the site guidelines",
+    "expect": "a[href='newsguidelines.html']"
+  },
+  {
+    "id": "hn-formatdoc",
+    "url": "https://news.ycombinator.com/formatdoc",
+    "intent": "Read the formatting guide",
+    "expect": "a[href='newsguidelines.html']"
+  },
+  {
+    "id": "hn-security",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Read the security page",
+    "expect": "a[href='security.html']"
+  },
+  {
+    "id": "hn-lists",
+    "url": "https://news.ycombinator.com/",
+    "intent": "See the lists page",
+    "expect": "a[href='lists']"
+  },
+  {
+    "id": "hn-api",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Find the API documentation link",
+    "expect": "a[href='https://github.com/HackerNews/API']"
+  },
+  {
+    "id": "hn-newest-day",
+    "url": "https://news.ycombinator.com/newest",
+    "intent": "Open the front page link in the navigation",
+    "expect": "a[href='front']"
+  },
+  {
+    "id": "hn-front-ask2",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Browse the Ask HN posts",
+    "expect": "a[href='ask']"
+  },
+  {
+    "id": "hn-front-show2",
+    "url": "https://news.ycombinator.com/",
+    "intent": "Browse Show HN posts",
+    "expect": "a[href='show']"
+  },
+  {
+    "id": "docs-tutorial2",
+    "url": "https://docs.python.org/3/",
+    "intent": "Open the Python tutorial for beginners",
+    "expect": "a[href='tutorial/index.html']"
+  },
+  {
+    "id": "docs-lib",
+    "url": "https://docs.python.org/3/",
+    "intent": "Open the library reference index",
+    "expect": "a[href='library/index.html']"
+  },
+  {
+    "id": "docs-ref",
+    "url": "https://docs.python.org/3/",
+    "intent": "Open the language reference",
+    "expect": "a[href='reference/index.html']"
+  },
+  {
+    "id": "docs-install",
+    "url": "https://docs.python.org/3/",
+    "intent": "Read the installation instructions",
+    "expect": "a[href='using/index.html']"
+  },
+  {
+    "id": "docs-faq",
+    "url": "https://docs.python.org/3/",
+    "intent": "Read the Python FAQ",
+    "expect": "a[href='faq/index.html']"
+  },
+  {
+    "id": "docs-glossary",
+    "url": "https://docs.python.org/3/",
+    "intent": "Open the glossary of Python terms",
+    "expect": "a[href='glossary.html']"
+  },
+  {
+    "id": "docs-download",
+    "url": "https://docs.python.org/3/",
+    "intent": "Download the documentation for offline use",
+    "expect": "a[href='download.html']"
+  },
+  {
+    "id": "pypi-req-files",
+    "url": "https://pypi.org/project/requests/",
+    "intent": "Browse the files of this release",
+    "expect": "a[href='#files']"
+  },
+  {
+    "id": "pypi-req-desc",
+    "url": "https://pypi.org/project/requests/",
+    "intent": "Read the project description",
+    "expect": "a[href='#description']"
+  },
+  {
+    "id": "pypi-req-home-link",
+    "url": "https://pypi.org/project/requests/",
+    "intent": "Open the project's documentation site",
+    "expect": "a[href^='https://requests.readthedocs.io']"
+  },
+  {
+    "id": "pypi-bin",
+    "url": "https://pypi.org/project/pip/",
+    "intent": "Open the pip project page's release history",
+    "expect": "a[href='#history']"
+  },
+  {
+    "id": "pypi-search-all",
+    "url": "https://pypi.org/search/?q=requests",
+    "intent": "Search PyPI again from the results page",
+    "expect": "input[name='q']"
+  },
+  {
+    "id": "pypi-help",
+    "url": "https://pypi.org/help/",
+    "intent": "Open the PyPI user guide",
+    "expect": "a[href^='https://packaging.python.org']"
+  },
+  {
+    "id": "crates-home-search",
+    "url": "https://crates.io/",
+    "intent": "Search for a crate on crates.io",
+    "expect": "input[name='q']"
+  },
+  {
+    "id": "crates-install",
+    "url": "https://crates.io/",
+    "intent": "Read how to install a crate with cargo",
+    "expect": "a[href='/install']"
+  },
+  {
+    "id": "crates-login",
+    "url": "https://crates.io/",
+    "intent": "Log in to crates.io",
+    "expect": "a[href='/login']"
+  },
+  {
+    "id": "crates-trending",
+    "url": "https://crates.io/crates/serde",
+    "intent": "Open the documentation of this crate",
+    "expect": "a[href^='https://docs.rs']"
+  },
+  {
+    "id": "crates-serde-repo",
+    "url": "https://crates.io/crates/serde",
+    "intent": "Open the source repository of this crate",
+    "expect": "a[href^='https://github.com/serde-rs']"
+  },
+  {
+    "id": "gh-tab-code",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the code tab of this repository",
+    "expect": "a[href$='/jevnav']"
+  },
+  {
+    "id": "gh-tab-security",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the security tab",
+    "expect": "a[href$='/security']"
+  },
+  {
+    "id": "gh-tab-insights",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the insights tab",
+    "expect": "a[href$='/pulse']"
+  },
+  {
+    "id": "gh-issues-new",
+    "url": "https://github.com/dtduc-git/jevnav/issues",
+    "intent": "Open a new issue",
+    "expect": "a[href$='/issues/new']"
+  },
+  {
+    "id": "gh-releases",
+    "url": "https://github.com/dtduc-git/jevnav",
+    "intent": "Open the releases page of this repository",
+    "expect": "a[href$='/releases']"
+  },
+  {
+    "id": "wiki-art-random",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "Open a random Wikipedia article",
+    "expect": "a[href='/wiki/Special:Random']"
+  },
+  {
+    "id": "wiki-art-whatlinks",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "See which pages link to this article",
+    "expect": "a[href='/wiki/Special:WhatLinksHere/Web_browser']"
+  },
+  {
+    "id": "wiki-art-cite",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "Find the citation information of this article",
+    "expect": "a[href='/wiki/Special:CiteThisPage?page=Web_browser']"
+  },
+  {
+    "id": "wiki-art-perma",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "Read the permanent link to this revision",
+    "expect": "a[href*='oldid=']"
+  },
+  {
+    "id": "wiki-art-main",
+    "url": "https://en.wikipedia.org/wiki/Web_browser",
+    "intent": "Go back to the Wikipedia main page",
+    "expect": "a[href='/wiki/Main_Page']"
+  },
+  {
+    "id": "ex-python",
+    "url": "https://example.com/",
+    "intent": "Open the example domain documentation",
+    "expect": "a"
+  },
+  {
+    "id": "py-about",
+    "url": "https://www.python.org/about/",
+    "intent": "Read about the Python Software Foundation",
+    "expect": "a[href^='/psf/']"
+  },
+  {
+    "id": "py-events2",
+    "url": "https://www.python.org/events/",
+    "intent": "See the calendar of events",
+    "expect": "a[href='/events/calendars/']"
+  },
+  {
+    "id": "py-success",
+    "url": "https://www.python.org/success-stories/",
+    "intent": "Read a Python success story",
+    "expect": "a[href^='/success-stories/']"
+  },
+  {
+    "id": "py-jobs2",
+    "url": "https://www.python.org/jobs/",
+    "intent": "Post a Python job",
+    "expect": "a[href='/jobs/']"
   }
 ]

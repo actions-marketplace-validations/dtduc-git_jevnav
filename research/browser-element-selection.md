@@ -20,19 +20,31 @@ answer have run unattended?
   page's ranked shortlist as options, `none` allowed.
 - Reproduce: `uv run python benchmarks/element-selection/run.py --json out.json`
 
-## Result (model `jev-1.13.0`)
+## Result (model `jev-1.13.0`, second pass)
 
 | metric | value |
 |---|---|
-| scored cases | 26 |
-| correct | **25 (96.2%)** |
-| confidence ≥ 0.9 (would run unattended) | 18 (69.2%) |
-| **precision at that gate** | **18/18 (100%)** |
-| wrong below the gate | 1 (`mdn-home-js`, p=0.57 → routed to review) |
-| wrong above the gate | **0** |
-| latency | p50 321ms, p95 346ms |
-| cost | **$0.000155 per case** |
-| invalid cases | 4 (ambiguous `expect` selectors, see below) |
+| cases written | 71 |
+| scored (label survived the visible-unique check) | **41** |
+| correct | **41 (100%)** |
+| confidence ≥ 0.9 (would run unattended) | 30 (73%) |
+| **precision at that gate** | **30/30 (100%)** |
+| wrong | **0** (the earlier `mdn-home-js` miss answered correctly this run) |
+| latency | p50 365ms, p95 794ms |
+| cost | **$0.000153 per case** |
+| invalid cases | **30** — my labels, not the tool |
+
+The invalid rate is the finding worth keeping: 30 of 71 `expect` selectors matched
+zero or several *visible* elements when the harness checked them (a footer and a
+nav link with the same `href`, a selector that only exists behind a collapsed
+menu, a page whose markup differs from memory). The harness refuses to score
+those rather than guessing, which is why the accuracy above is over 41 cases and
+not 71. Writing labels that survive requires checking them against the live page
+while writing — the next pass does exactly that, and a second annotator then
+adjudicates the ones the two of us label differently.
+
+Earlier pass: 26 scored, 25 correct, 18/18 at the gate, one miss at p=0.57
+(`mdn-home-js`) that went to review.
 
 The one miss is the interesting one: on MDN the intent was "open the JavaScript
 reference" and the page shows several entries named JavaScript (main link, a
