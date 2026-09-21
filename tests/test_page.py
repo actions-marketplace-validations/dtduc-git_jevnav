@@ -3,8 +3,8 @@ import pytest
 from jevnav import page as page_module
 
 
-def extract(page):
-    return page_module.extract(page)
+def extract(page, **kwargs):
+    return page_module.extract(page, **kwargs)
 
 
 def by_name(candidates, name):
@@ -49,7 +49,7 @@ def test_hidden_elements_are_not_candidates(page, app_url):
     assert not any(c["name"] == "Sign in" for c in candidates)
 
 
-def test_candidate_list_is_capped_and_reports_what_was_dropped(page, tmp_path):
+def test_candidate_list_is_a_shortlist_and_reports_what_was_dropped(page, tmp_path):
     html = (
         "<html><body>"
         + "".join(f"<button>Button {i}</button>" for i in range(300))
@@ -60,13 +60,34 @@ def test_candidate_list_is_capped_and_reports_what_was_dropped(page, tmp_path):
     page.goto(path.as_uri())
     candidates, total, dropped = extract(page)
     assert total == 300
-    assert len(candidates) == 254
-    assert dropped == 46
+    assert len(candidates) == 120  # the default shortlist
+    assert dropped == 180
     # the API allows 255 choices per question, and "none" takes one
     from jevnav.decide import build_question
 
-    question = build_question("file:///x", "many", "press one", candidates)
+    biggest, _, _ = extract(page, limit=254)
+    assert len(biggest) == 254
+    question = build_question("file:///x", "many", "press one", biggest)
     assert len(question["criteria"]) == 255
+
+
+def test_extraction_prefers_in_viewport_and_form_controls(page, tmp_path):
+    html = (
+        "<html><body>"
+        + '<input aria-label="Search this site">'
+        + "".join(f'<a href="/n{i}">noise {i}</a>' for i in range(60))
+        + '<button style="margin-top:2000px">Far away</button>'
+        + "</body></html>"
+    )
+    path = tmp_path / "shortlist.html"
+    path.write_text(html)
+    page.goto(path.as_uri())
+    candidates, _, dropped = extract(page, limit=5)
+    assert dropped > 0
+    names = [c["name"] for c in candidates]
+    assert names[0] == "Search this site"  # form control, in viewport
+    assert any(name.startswith("noise") for name in names)
+    assert "Far away" not in names  # off-screen, last priority
 
 
 def test_locator_for_returns_a_standard_playwright_locator(page, app_url):

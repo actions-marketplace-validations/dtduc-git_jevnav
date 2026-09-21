@@ -41,6 +41,10 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
 - Local-first: no telemetry, no hosted service, no screenshots in the decision
   loop. Traces stay local (`*.trace.jsonl` is gitignored, example traces
   excepted).
+- The candidate shortlist (`page.py`: ordering + `--max-candidates`) is a speed
+  lever with a measured trade: same accuracy on the HN task at 40 vs 199
+  candidates, 2.8x faster cold and 3.8x fewer tokens. If you change the ordering
+  or the default cap, re-measure on a real page and write the number down.
 - Play mode (`play.py`) is measured against `--policy random` at the same rate,
   always. Never claim a game result without the control run beside it, and never
   tune the bundled game until the agent wins: the honest number here is the

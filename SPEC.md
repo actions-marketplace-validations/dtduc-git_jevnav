@@ -34,7 +34,7 @@ complete or broken, never half-read).
 | `total_on_page` | int | visible interactive elements found |
 | `dropped` | int | candidates not shown to the model (cap is 255) |
 | `dom_hash` | string | hash of the candidate set as the model sees it (identity + current value), not of the page bytes |
-| `candidates` | array | see below |
+| `candidates` | array | the shortlist the model saw (see below) |
 | `expected_cid` | string \| null | ground truth, when the flow declared `expect`; `"none"` means "no element should match" |
 | `decision` | object | `{choice, chosen_fp, chosen_name, confidence, probabilities, model, latency_ms, usage, cost_usd, error}` |
 | `gate` | object | `{verdict: auto \| review \| blocked, reason}` |
@@ -61,6 +61,20 @@ to every line cost accuracy (a fieldset legend "Sign in" reads like the action
 "Sign in"; p 0.85 → 0.47 on that intent), while adding it only for duplicate
 names rescued the duplicate cases and changed nothing on pages with unique
 names.
+
+## What the model sees
+
+`candidates` is a **shortlist**, not every element on the page. Ordering is
+deterministic: in-viewport first, then form controls (textbox, searchbox,
+combobox, checkbox, radio, switch), then buttons/tabs/menuitems, then links,
+then DOM order. The list is capped at `--max-candidates` (default 120; the API's
+hard cap is 254 because `none` takes one of 255 choices) and `dropped` records
+how many were left out (truncation is a warning by default, `truncated: review`
+to gate on it).
+
+Measured 2026-09-21 on Hacker News (199 candidates): the same decisions at 40
+candidates cost 1815 input tokens and ~300ms instead of 6973 tokens and ~350ms
+warm / 842ms cold.
 
 ## Fingerprints
 
@@ -102,6 +116,16 @@ With `--execute`, recorded actions are re-run after a successful resolution.
 Actions are resolved by **fingerprint**, never by position, and an action whose
 value came from `${ENV}` reads the variable from the environment at replay time.
 If the fingerprint is gone or duplicated, replay refuses to act.
+
+## Side tools
+
+`console`, `network`, `dialogs`, `read_js`, `wait_for`, `scroll` and the tab
+tools (`tabs`, `new_page`, `select_page`, `close_page`) are the agent's eyes and
+hands around the decision loop. They are **observation and navigation only**:
+nothing about them participates in a decision, a gate or a trace's replay path,
+and they are not written to the trace. Dialogs are the exception worth knowing:
+whatever policy resolves them (`--dialog-policy dismiss|accept`) the dialog text
+is recorded on the page recorder and reported by `dialogs`.
 
 ## Browser modes
 

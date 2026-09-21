@@ -255,9 +255,13 @@ acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
 
 ## How it works
 
-- **Candidates.** Visible interactive elements, capped at 255, in-viewport
-  first. Each carries role, accessible name, type, href, placeholder and a
-  scope (nearest legend/heading) so three "Email" fields stay distinguishable.
+- **Candidates are a shortlist, not the page.** Visible interactive elements
+  ordered by how likely a human would act on them — in-viewport first, form
+  controls before buttons before links — capped at 120 (`--max-candidates`, the
+  API's hard cap is 254). Measured on Hacker News (199 elements → 40): same
+  accuracy, **2.8× faster** on a cold decision and **3.8× fewer input tokens**.
+  Each carries role, accessible name, type, href, placeholder and a scope
+  (nearest legend/heading) so three "Email" fields stay distinguishable.
 - **Fingerprint.** An element's identity is `role|name` (whitespace- and
   case-normalized). Traces store the fingerprint of every candidate as it was
   shown to the model, so replay never re-derives identity with new code.
@@ -271,6 +275,26 @@ acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
   Replay re-runs actions only with `--execute`, and resolves them by
   fingerprint — never by position — so a shifted page cannot click the wrong
   thing.
+
+## Benchmarks
+
+`benchmarks/mcp-compare.py` measures jevnav and chrome-devtools-mcp on the same
+task (open Hacker News' Newest page), same machine:
+
+| | jevnav | chrome-devtools-mcp |
+|---|---|---|
+| MCP ready | **22ms** (lazy browser) | 491ms |
+| observation the agent must read | **4.8k chars** | 38.3k chars |
+| tool calls for the task | 2 | 4 |
+| decision cost (real / modelled) | **$0.0008** | $0.057 |
+| outcome verified against the page | **yes** (`--success` selector) | no such notion |
+
+With the *same* LLM (deepseek-v4.1-flash via opencode) doing the same tasks,
+once per server: HN Newest took **18.0s / 2 calls** with jevnav and 23.5s / 4
+calls with chrome-devtools; a Wikipedia search took **18.1s / 2 calls** and
+worked, while the chrome-devtools run burned 14 calls in 83s and got HTTP 403
+from Wikipedia's robot policy. Small samples, one model — run it yourself with
+`uv run --with mcp python benchmarks/mcp-compare.py`.
 
 ## Measured
 

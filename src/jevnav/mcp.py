@@ -434,8 +434,9 @@ class Session:
             "listed": len(candidates),
             "dropped": dropped,
             "candidates": [
-                {"name": c["name"], "role": c["role"], "scope": c["scope"]} for c in candidates[:80]
+                {"name": c["name"], "role": c["role"], "scope": c["scope"]} for c in candidates[:30]
             ],
+            "candidates_shown": min(30, len(candidates)),
         }
 
     def summary(self) -> dict[str, Any]:
