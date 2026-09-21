@@ -85,7 +85,8 @@ def test_an_identical_page_is_not_moved_by_a_newer_shortlist(tmp_path, page):
     candidates, _, _ = extract(page)
     chosen = candidates[0]
     path = tmp_path / "old-order.trace.jsonl"
-    with TraceWriter(path, flow="x", tool="jevnav/0.1.0") as writer:
+    # order_spec=None: a trace written before the field existed
+    with TraceWriter(path, flow="x", tool="jevnav/0.1.0", order_spec=None) as writer:
         writer.step(
             step=1,
             intent="click alpha",
@@ -98,6 +99,49 @@ def test_an_identical_page_is_not_moved_by_a_newer_shortlist(tmp_path, page):
     assert result["results"][0]["page_identical"] is True
     assert result["results"][0]["verdict"] == "ok"
     assert "re-ranked" in result["results"][0]["reason"]
+
+
+def test_a_trace_from_another_version_with_the_same_ordering_is_moved(tmp_path, page):
+    """0.1.8 and 0.1.9 order identically: a reorder is the page, not the extractor."""
+    site = tmp_path / "two.html"
+    site.write_text(
+        "<html><body><button id=a>Alpha</button><button id=b>Beta</button></body></html>"
+    )
+    page.goto(site.as_uri())
+    candidates, _, _ = extract(page)
+    chosen = next(c for c in candidates if c["name"] == "Beta")
+    path = tmp_path / "older.trace.jsonl"
+    # order_spec=None: a trace written before the field existed
+    with TraceWriter(path, flow="x", tool="jevnav/0.1.8", order_spec=None) as writer:
+        writer.step(
+            step=1,
+            intent="click beta",
+            url=page.url,
+            title="t",
+            candidates=candidates,
+            decision={"choice": chosen["cid"], "confidence": 0.99},
+        )
+    site.write_text(
+        "<html><body><button id=b>Beta</button><button id=a>Alpha</button></body></html>"
+    )
+    step = replay_trace(path, page=page)["results"][0]
+    assert step["page_identical"] is True
+    assert step["verdict"] == "moved"
+    assert "re-ranked" not in step["reason"]
+
+
+def test_the_ordering_version_of_old_traces_is_mapped_from_the_tool():
+    from jevnav.replay import order_spec_of_run, order_spec_of_tool
+
+    assert order_spec_of_tool("jevnav/0.1.0") == 0
+    assert order_spec_of_tool("jevnav/0.1.4") == 1
+    assert order_spec_of_tool("jevnav/0.1.5") == 2
+    assert order_spec_of_tool("jevnav/0.1.8") == 2
+    assert order_spec_of_tool("other/1.0") is None
+    assert order_spec_of_tool(None) is None
+    assert order_spec_of_run({"order_spec": 7, "tool": "jevnav/0.1.0"}) == 7
+    assert order_spec_of_run({"tool": "jevnav/0.1.0"}) == 0
+    assert order_spec_of_run({}) is None
 
 
 def test_a_dom_reorder_is_moved_even_when_the_fingerprints_match(tmp_path, page):

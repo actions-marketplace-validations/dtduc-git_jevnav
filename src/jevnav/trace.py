@@ -115,6 +115,8 @@ class TraceWriter:
     """Append-only JSONL writer; every step is flushed so a crash keeps evidence."""
 
     def __init__(self, path: str | Path, **run_meta: Any) -> None:
+        from .page import ORDER_SPEC  # page imports trace, so import at call time
+
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self.path.open("w")
@@ -123,6 +125,7 @@ class TraceWriter:
             "spec": SPEC,
             "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "tool": f"jevnav/{__version__}",
+            "order_spec": ORDER_SPEC,
             **run_meta,
         }
         self._write(self.run_meta)

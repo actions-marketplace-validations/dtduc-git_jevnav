@@ -17,7 +17,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from . import __version__
 from . import page as page_module
 from .trace import read_trace
 
@@ -40,6 +39,34 @@ def normalize_fp(fp: str, patterns: list[str] | None) -> str:
     return " ".join(fp.split())
 
 
+def order_spec_of_tool(tool: str | None) -> int | None:
+    """The ordering version of a trace that predates ``run.order_spec``.
+
+    0.1.0 had no shortlist sort, 0.1.1–0.1.4 sorted within a frame, 0.1.5+ sorts
+    across frames. ``None`` means unknown, and unknown never excuses movement.
+    """
+    if not isinstance(tool, str) or not tool.startswith("jevnav/"):
+        return None
+    try:
+        version = tuple(int(part) for part in tool.removeprefix("jevnav/").split(".")[:3])
+    except ValueError:
+        return None
+    version += (0,) * (3 - len(version))
+    if version < (0, 1, 1):
+        return 0
+    if version < (0, 1, 5):
+        return 1
+    return 2
+
+
+def order_spec_of_run(run: dict[str, Any]) -> int | None:
+    """The ordering version that produced a trace: the field, else mapped from ``tool``."""
+    spec = run.get("order_spec")
+    if spec is not None:
+        return spec
+    return order_spec_of_tool(run.get("tool"))
+
+
 def replay_step(
     page: Any,
     step: dict[str, Any],
@@ -48,13 +75,13 @@ def replay_step(
     force_navigate: bool = False,
     normalize: list[str] | None = None,
     max_candidates: int | None = None,
-    recorded_tool: str | None = None,
+    recorded_order_spec: int | None = None,
 ) -> dict[str, Any]:
     """Re-resolve one recorded decision against the page as it is now.
 
-    ``recorded_tool`` is the trace's ``run.tool``; a position difference with an
-    identical candidate set is only explained as re-ranking when the trace came
-    from a different extractor version. Same version + same set means the page
+    ``recorded_order_spec`` is the trace's shortlist ordering version; a position
+    difference with an identical candidate set is only explained as re-ranking
+    across *different* ordering versions. Same version + same set means the page
     itself reordered.
     """
     target = url or step["url"]
@@ -120,16 +147,17 @@ def replay_step(
         recorded_index = next(i for i, c in enumerate(step["candidates"]) if c["cid"] == choice)
         result["resolved_index"] = index
         # With an identical candidate set, a position difference can only be a
-        # re-ranking — and only a *different* extractor version may re-rank.
-        # Same version + same set means the page itself reordered.
-        same_tool = recorded_tool == f"jevnav/{__version__}"
-        reranked = result["page_identical"] and recorded_tool is not None and not same_tool
+        # re-ranking — and only *different* ordering logic may re-rank. The same
+        # ordering + same set means the page itself reordered.
+        same_order = recorded_order_spec == page_module.ORDER_SPEC
+        reranked = result["page_identical"] and recorded_order_spec is not None and not same_order
         result["moved"] = index != recorded_index and not reranked
         result["verdict"] = MOVED if result["moved"] else OK
         result["reason"] = f"resolved to {current[index]['name']!r} at position {index}"
         if index != recorded_index and reranked:
             result["reason"] += (
-                f" (re-ranked by jevnav/{__version__}; the trace was written by {recorded_tool})"
+                f" (the shortlist was re-ranked: trace ordering v{recorded_order_spec}, "
+                f"now v{page_module.ORDER_SPEC})"
             )
     return result
 
@@ -159,7 +187,7 @@ def replay_trace(
             url=target,
             force_navigate=index == 0,
             normalize=normalize,
-            recorded_tool=run.get("tool"),
+            recorded_order_spec=order_spec_of_run(run),
         )
         if execute and result["verdict"] in {OK, MOVED}:
             try:

@@ -241,6 +241,13 @@ ROLE_RANK = {
 }
 
 
+# Version of the shortlist ordering (ROLE_RANK, global_order, the cap). Bump it
+# only when the order or the cap changes: replay excuses a position change on an
+# identical candidate set across different ordering versions, and a wrong bump
+# would hide real movement. Recorded in every trace as ``run.order_spec``.
+ORDER_SPEC = 2
+
+
 def candidate_key(candidate: dict[str, Any]) -> str:
     """The key to look a candidate up by: fingerprint, then which frame it lives in."""
     return f"{candidate.get('frame', 0)}|{candidate['fp']}"
