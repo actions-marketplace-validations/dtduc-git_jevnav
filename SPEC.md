@@ -52,8 +52,10 @@ complete or broken, never half-read).
 | `tag`, `type` | string \| null | DOM tag and input type |
 | `href`, `placeholder` | string \| null | truncated to 120 / 60 chars |
 | `scope` | string \| null | nearest legend, form name or heading (max 60 chars) |
+| `value` | string \| null | current field value at extraction time (part of `dom_hash`) |
 | `disabled`, `in_viewport` | bool | |
 | `frame` | int | which frame the element lives in (0 is the main frame) |
+| `rank` | int | position in its frame's shortlist — an ordering tiebreaker, not a DOM index and not identity |
 
 **How a candidate is described to the model** (option text):
 `Name — role → href`, plus `in 'scope'` only when another candidate on the page
@@ -110,7 +112,9 @@ For each step, in order:
 3. Resolve the recorded `decision.choice`:
    - fingerprint absent → `changed`
    - fingerprint matches more than one element → `ambiguous`
-   - fingerprint matches one element at a different position → `moved`
+   - fingerprint matches one element at a different position **and the candidate
+     set is not identical** → `moved`; with an identical set a position change
+     is the shortlist's ordering (a newer extractor re-ranks) and stays `ok`
    - fingerprint matches one element at the recorded position → `ok`
    - `choice` is `none`/null → `ok` (nothing to resolve), with a reason
    - navigation or extraction failure → `error`

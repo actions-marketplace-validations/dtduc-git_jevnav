@@ -111,9 +111,14 @@ def replay_step(
         index = matches[0]
         recorded_index = next(i for i, c in enumerate(step["candidates"]) if c["cid"] == choice)
         result["resolved_index"] = index
-        result["moved"] = index != recorded_index
+        # An identical candidate set cannot have moved on the page: a position
+        # difference is the shortlist's ordering (a newer extractor re-ranks),
+        # not movement. Only a page that drifted can move an element.
+        result["moved"] = index != recorded_index and not result["page_identical"]
         result["verdict"] = MOVED if result["moved"] else OK
         result["reason"] = f"resolved to {current[index]['name']!r} at position {index}"
+        if index != recorded_index and result["page_identical"]:
+            result["reason"] += " (re-ranked by the current shortlist; the page is identical)"
     return result
 
 

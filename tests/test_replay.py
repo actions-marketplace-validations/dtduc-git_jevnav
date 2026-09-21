@@ -75,6 +75,54 @@ def test_replay_reports_drift_without_failing_on_other_changes(trace_path, page,
     assert password_step["drift"]["new"] + password_step["drift"]["missing"] > 0
 
 
+def test_an_identical_page_is_not_moved_by_a_newer_shortlist(tmp_path, page):
+    """A 0.1.0 trace replayed by a later extractor: re-ranking is not movement."""
+    site = tmp_path / "two.html"
+    site.write_text(
+        "<html><body><button id=a>Alpha</button><button id=b>Beta</button></body></html>"
+    )
+    page.goto(site.as_uri())
+    candidates, _, _ = extract(page)
+    chosen = candidates[0]
+    path = tmp_path / "old-order.trace.jsonl"
+    with TraceWriter(path, flow="x") as writer:
+        writer.step(
+            step=1,
+            intent="click alpha",
+            url=page.url,
+            title="t",
+            candidates=list(reversed(candidates)),  # an older extractor's order
+            decision={"choice": chosen["cid"], "confidence": 0.99},
+        )
+    result = replay_trace(path, page=page)
+    assert result["results"][0]["page_identical"] is True
+    assert result["results"][0]["verdict"] == "ok"
+    assert "re-ranked" in result["results"][0]["reason"]
+
+
+def test_a_real_position_change_is_still_moved(tmp_path, page):
+    site = tmp_path / "one.html"
+    site.write_text("<html><body><button id=a>Alpha</button></body></html>")
+    page.goto(site.as_uri())
+    candidates, _, _ = extract(page)
+    path = tmp_path / "one.trace.jsonl"
+    with TraceWriter(path, flow="x") as writer:
+        writer.step(
+            step=1,
+            intent="click alpha",
+            url=page.url,
+            title="t",
+            candidates=candidates,
+            decision={"choice": candidates[0]["cid"], "confidence": 0.99},
+        )
+    site.write_text(
+        "<html><body><button id=z>Zeta</button><button id=a>Alpha</button></body></html>"
+    )
+    result = replay_trace(path, page=page)
+    assert result["results"][0]["drift"]["new"] == 1
+    assert result["results"][0]["verdict"] == "moved"
+
+
 def test_replay_does_not_execute_by_default(trace_path, page):
     replay_trace(trace_path, page=page)
     assert page.input_value("#login-password") == ""
