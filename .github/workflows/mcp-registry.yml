@@ -25,14 +25,16 @@ jobs:
           set -euo pipefail
           ./mcp-publisher login github-oidc || ./mcp-publisher login github
           # the registry verifies package ownership against PyPI, and this job
-          # starts at the same moment as the PyPI publish: give it time to land
-          for attempt in 1 2 3 4 5 6; do
+          # starts at the same moment as the PyPI publish: give it time to land.
+          # 6x20s was not enough (0.1.9: PyPI had the files 27s before the last
+          # attempt, and the registry still saw a cached 404), so wait 6 minutes.
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             if ./mcp-publisher publish; then
               echo "published on attempt $attempt"
               exit 0
             fi
-            echo "attempt $attempt failed (PyPI may not have the version yet); retrying in 20s"
-            sleep 20
+            echo "attempt $attempt failed (PyPI may not have the version yet); retrying in 30s"
+            sleep 30
           done
-          echo "registry publish failed after 6 attempts" >&2
+          echo "registry publish failed after 12 attempts" >&2
           exit 1
