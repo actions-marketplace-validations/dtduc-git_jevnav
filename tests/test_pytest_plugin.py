@@ -80,6 +80,18 @@ def test_an_env_literal_is_traced_by_name_with_a_warning(navigator, app_url, mon
     assert steps[0]["action"] == {"type": "fill", "value_from_env": "DEMO_PASSWORD"}
 
 
+def test_a_path_that_matches_an_env_value_stays_a_literal(navigator, app_url, monkeypatch):
+    """$PWD is not a secret; rewriting it would replay as another machine's path."""
+    monkeypatch.setenv("PROJECT_DIR", "/Users/demo/work/acme-console")
+    jev, writer = navigator
+    jev.goto(app_url)
+    with pytest.warns(UserWarning, match="kept as a literal"):
+        jev.fill("the email address", "/Users/demo/work/acme-console")
+    writer.close()
+    _, steps = read_trace(writer.path)
+    assert steps[0]["action"] == {"type": "fill", "value": "/Users/demo/work/acme-console"}
+
+
 def test_a_missing_env_value_fails_before_the_paid_call(page, tmp_path, app_url, monkeypatch):
     monkeypatch.delenv("ACME_PASSWORD", raising=False)
     fake = FakeJev({"password": "Password"})

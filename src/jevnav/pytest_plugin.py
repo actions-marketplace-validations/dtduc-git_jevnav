@@ -35,22 +35,19 @@ from .page import by_cid, execute, extract, locator_for
 from .trace import TraceWriter
 
 TRACE_DIR_OPTION = "--jev-trace-dir"
+SECRET_ENV_NAME = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL|AUTH", re.IGNORECASE)
 
 
-def env_name_for_value(value: str, *, min_length: int = 8) -> str | None:
-    """The name of an environment variable that already holds this exact value.
+def env_names_for_value(value: str, *, min_length: int = 8) -> list[str]:
+    """Environment variables that already hold this exact value, alphabetical.
 
     ``os.environ["TOKEN"]`` is the idiomatic way to pass a secret in a test, and
-    the literal would land in the committed trace verbatim. A value that is
-    already in the environment is recorded by name instead, like ``${TOKEN}``.
-    Short values are skipped: matching ``"true"`` or ``"/tmp"`` would be noise.
+    the literal would land in the committed trace verbatim. Short values are
+    skipped: matching ``"true"`` or ``"/tmp"`` would be noise.
     """
     if len(value) < min_length:
-        return None
-    for name, current in sorted(os.environ.items()):
-        if current == value:
-            return name
-    return None
+        return []
+    return [name for name in sorted(os.environ) if os.environ[name] == value]
 
 
 def pytest_addoption(parser: Any) -> None:
@@ -140,11 +137,21 @@ class JevNavigator:
             resolved, env_name = context_value(value)
             payload["value"] = resolved
             if env_name is None:
-                env_name = env_name_for_value(resolved)
-                if env_name:
+                matches = env_names_for_value(resolved)
+                secret = next((n for n in matches if SECRET_ENV_NAME.search(n)), None)
+                if secret:
+                    env_name = secret
                     warnings.warn(
-                        f"the {action} value for {intent!r} is the value of ${env_name}; "
-                        f'the trace records the name only — write "${{{env_name}}}" to say so',
+                        f"the {action} value for {intent!r} is the value of ${secret}; "
+                        f'the trace records the name only — write "${{{secret}}}" to say so',
+                        stacklevel=3,
+                    )
+                elif matches:
+                    # A path that happens to equal $PWD is not a secret; rewriting
+                    # it would replay as another machine's value.
+                    warnings.warn(
+                        f"the {action} value for {intent!r} equals ${matches[0]}; kept as a "
+                        "literal (only secret-looking variables are recorded by name)",
                         stacklevel=3,
                     )
             if env_name:
