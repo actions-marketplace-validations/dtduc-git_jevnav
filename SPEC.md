@@ -112,9 +112,10 @@ For each step, in order:
 3. Resolve the recorded `decision.choice`:
    - fingerprint absent → `changed`
    - fingerprint matches more than one element → `ambiguous`
-   - fingerprint matches one element at a different position **and the candidate
-     set is not identical** → `moved`; with an identical set a position change
-     is the shortlist's ordering (a newer extractor re-ranks) and stays `ok`
+   - fingerprint matches one element at a different position → `moved`, unless
+     the candidate set is identical **and** the trace's `run.tool` differs from
+     the running version: a different extractor may re-rank the shortlist, while
+     the same version and the same set mean the page itself reordered
    - fingerprint matches one element at the recorded position → `ok`
    - `choice` is `none`/null → `ok` (nothing to resolve), with a reason
    - navigation or extraction failure → `error`

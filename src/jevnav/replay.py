@@ -17,6 +17,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from . import page as page_module
 from .trace import read_trace
 
@@ -47,8 +48,15 @@ def replay_step(
     force_navigate: bool = False,
     normalize: list[str] | None = None,
     max_candidates: int | None = None,
+    recorded_tool: str | None = None,
 ) -> dict[str, Any]:
-    """Re-resolve one recorded decision against the page as it is now."""
+    """Re-resolve one recorded decision against the page as it is now.
+
+    ``recorded_tool`` is the trace's ``run.tool``; a position difference with an
+    identical candidate set is only explained as re-ranking when the trace came
+    from a different extractor version. Same version + same set means the page
+    itself reordered.
+    """
     target = url or step["url"]
     recorded = {c["cid"]: c for c in step["candidates"]}
     choice = (step.get("decision") or {}).get("choice")
@@ -111,14 +119,18 @@ def replay_step(
         index = matches[0]
         recorded_index = next(i for i, c in enumerate(step["candidates"]) if c["cid"] == choice)
         result["resolved_index"] = index
-        # An identical candidate set cannot have moved on the page: a position
-        # difference is the shortlist's ordering (a newer extractor re-ranks),
-        # not movement. Only a page that drifted can move an element.
-        result["moved"] = index != recorded_index and not result["page_identical"]
+        # With an identical candidate set, a position difference can only be a
+        # re-ranking — and only a *different* extractor version may re-rank.
+        # Same version + same set means the page itself reordered.
+        same_tool = recorded_tool == f"jevnav/{__version__}"
+        reranked = result["page_identical"] and recorded_tool is not None and not same_tool
+        result["moved"] = index != recorded_index and not reranked
         result["verdict"] = MOVED if result["moved"] else OK
         result["reason"] = f"resolved to {current[index]['name']!r} at position {index}"
-        if index != recorded_index and result["page_identical"]:
-            result["reason"] += " (re-ranked by the current shortlist; the page is identical)"
+        if index != recorded_index and reranked:
+            result["reason"] += (
+                f" (re-ranked by jevnav/{__version__}; the trace was written by {recorded_tool})"
+            )
     return result
 
 
@@ -141,7 +153,14 @@ def replay_trace(
     results: list[dict[str, Any]] = []
     for index, step in enumerate(steps):
         target = swap_url or portable_url(step["url"], base_dir)
-        result = replay_step(page, step, url=target, force_navigate=index == 0, normalize=normalize)
+        result = replay_step(
+            page,
+            step,
+            url=target,
+            force_navigate=index == 0,
+            normalize=normalize,
+            recorded_tool=run.get("tool"),
+        )
         if execute and result["verdict"] in {OK, MOVED}:
             try:
                 action = action_for_replay(step["action"])

@@ -19,6 +19,8 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 SPEC = 0
 
 
@@ -120,6 +122,7 @@ class TraceWriter:
             "kind": "run",
             "spec": SPEC,
             "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tool": f"jevnav/{__version__}",
             **run_meta,
         }
         self._write(self.run_meta)
