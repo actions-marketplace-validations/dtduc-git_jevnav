@@ -12,7 +12,8 @@ are confident, unauditable and occasionally wrong. jevnav sits in between:
 
 1. **Jev picks the element.** The candidate list of the current page is turned
    into a choice question; the model answers with one element and a calibrated
-   probability.
+   probability. In loop mode (``jevnav go``) one request also answers *what to
+   do*, *whether the goal is already met* and *which context value to type*.
 2. **Every decision is recorded.** The trace holds the candidates as the model
    saw them, the choice, the probability and the cost — one JSONL file per run.
 3. **Risky actions are gated.** `p` below the threshold, or an intent that looks
@@ -31,7 +32,31 @@ playwright install chromium     # one-time browser download
 `jevnav run` needs a TypeSafe API key (`TYPESAFE_API_KEY`, or
 `~/.config/typesafe/apikey.txt`). `jevnav replay` needs none — that is the point.
 
-## Quickstart
+## Quickstart — let Jev drive
+
+```bash
+jevnav go --goal "sign in with the demo account and open the pricing page" \
+  --start https://app.example.com/login \
+  --context email=demo@example.com --context password="${ACME_PASSWORD}" \
+  --success "#pricing.visible" \
+  --report goal.md
+```
+
+```
+status: done — outcome verified against the page
+steps: 5 — auto 4, review 0, blocked 0
+```
+
+One Jev request per step, and every step is gated and traced. The loop stops
+when the model says the goal is done, when no listed element can make progress
+(`stuck`), when the gate wants a human (`review`), when the page stops changing
+(`no_progress`), or at `--max-steps`. `--dry-run` decides without acting.
+
+**`done` is a claim, not evidence.** Pass `--success <selector>` and the claim
+is checked against the page: `verified`, `unverified` (the selector is not
+there — the run fails), or "not verified" when you passed no selector at all.
+
+## Quickstart — a scripted flow
 
 ```yaml
 # flows/acme-login/flow.yaml
@@ -54,7 +79,9 @@ jevnav replay acme-login.trace.jsonl --report replay.md   # offline, determinist
 ```
 
 `run` walks the flow: extract candidates → ask Jev → gate → act → record.
-`replay` re-checks the trace against the live site, with no model in the loop:
+`replay` re-checks the trace against the live site, with no model in the loop
+(and with `--execute` it re-runs the recorded actions and verifies the recorded
+`--success` selector, so a whole agent run becomes a CI test):
 
 ```
 steps 3  verdicts: ok 3
@@ -73,7 +100,8 @@ Exit code 1, with the reason — that is the CI gate.
 
 ```yaml
 # flows/acme-login/gates.yaml  (optional; sane defaults apply)
-min_confidence: 0.9
+min_confidence: 0.9        # scripted flows: one question per step, well calibrated
+loop_min_confidence: 0.5   # goal loop: four questions at once, p runs lower
 risky:                                  # regular expressions, matched against
   - "\\b(delete|remove|purchase|pay)\\b"   # intent + chosen element name + role
 intents:
@@ -88,6 +116,14 @@ Three verdicts, no ambiguity:
 | `auto` | confidence at or above the threshold, nothing risky — the action runs |
 | `review` | a human confirms first (low `p`, risky intent, truncated candidate list) |
 | `blocked` | no decision was possible (model answered `none`, or the call failed) |
+| `n/a` | the loop stopped itself (`done`) — no action to gate |
+
+In loop mode the confidence threshold is lower on purpose. Measured
+2026-09-21: correct loop decisions land at p 0.41–0.99 and wrong ones at
+0.39–0.47, so p does not separate them. What keeps the loop safe is
+deterministic: `fill` on a button is refused before it runs, a field with no
+context value is blocked, two steps that change nothing stop the run, risky
+patterns always go to review, and the outcome is verified against `--success`.
 
 ## MCP
 
@@ -96,11 +132,11 @@ pip install "jevnav[mcp]"
 jevnav mcp --start https://app.example.com --trace session.trace.jsonl
 ```
 
-The agent asks for an intent (`browse("open the billing settings")`); jevnav
-extracts the candidates, asks Jev, applies the gate and — only on `auto` — acts
-in its own browser, returning the target, its Playwright selector and the
-confidence. `review` decisions come back unexecuted with the reason attached.
-The whole session is written to the same trace format, so it can be replayed
+Three tools: `browse(intent)` decides and acts one step (returning the target,
+its Playwright selector and the confidence), `goal(goal, context_json)` runs the
+whole loop towards a goal, and `page_state()` shows what jevnav can see. Only
+`auto` decisions are executed; `review` comes back unexecuted with the reason.
+The session is written to the same trace format, so it can be replayed
 afterwards.
 
 ## How it works
@@ -124,8 +160,15 @@ afterwards.
 
 ## Measured
 
-From the build-time spike (44 decisions: local fixtures, Hacker News, PyPI,
-Wikipedia; recorded 2026-09-21):
+The goal loop, measured on 2026-09-21 (4 goals × 2 wordings × real Jev, local
+fixture: sign in, open pricing, sign in then pricing, an impossible goal):
+**8/8 goals correct**, including the impossible one (`stuck`), **$0.00004 per
+step**, p50 314ms per step. One real run — sign in then open pricing — took 5
+steps, $0.000214, and replayed offline with `--execute`: 5/5 targets resolved,
+outcome verified.
+
+The element-decision spike (44 decisions: local fixtures, Hacker News, PyPI,
+Wikipedia):
 
 - **44/44** decisions correct; **28/28** at `p ≥ 0.9` (the auto gate).
 - Replay caught **4/4** injected DOM changes with **0** false alarms on the
@@ -150,8 +193,11 @@ not proof. `replay` is the number that matters in CI, and it is deterministic.
 
 ## Privacy
 
-Traces contain page URLs, element names and your actions — never screenshots or
-page content. Literal `value`s from the flow are recorded (they are already in
+Traces contain page URLs, element names and your actions — never screenshots.
+Loop mode also sends a short digest of the page's visible text (it is how the
+model judges whether the goal is done) and the current value of form fields
+(passwords masked) — that is what any browser agent has to observe. Scripted
+flows send neither. Literal `value`s from the flow are recorded (they are already in
 your repo); `${ENV}` values are recorded as the variable name only. Traces are
 gitignored by default; audit one before sharing it.
 

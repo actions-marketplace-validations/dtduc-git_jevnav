@@ -38,8 +38,11 @@ def fingerprint(role: str, name: str) -> str:
 
 
 def dom_hash(candidates: Iterable[dict[str, Any]]) -> str:
-    """Hash of the candidate set (identities only): same page state, same hash."""
-    payload = json.dumps(sorted(c["fp"] for c in candidates))
+    """Hash of what the model observes: identity plus current field values.
+
+    Values are part of the observation, so a fill counts as a state change.
+    """
+    payload = json.dumps(sorted(f"{c['fp']}={c.get('value') or ''}" for c in candidates))
     return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
@@ -53,6 +56,7 @@ def make_candidate(
     href: str | None = None,
     placeholder: str | None = None,
     scope: str | None = None,
+    value: str | None = None,
     disabled: bool = False,
     in_viewport: bool = True,
 ) -> dict[str, Any]:
@@ -66,6 +70,7 @@ def make_candidate(
         "href": href,
         "placeholder": placeholder,
         "scope": scope,
+        "value": value,
         "disabled": disabled,
         "in_viewport": in_viewport,
     }
@@ -81,6 +86,8 @@ def describe(candidate: dict[str, Any], *, disambiguate: bool = False) -> str:
     nothing on pages with unique names.
     """
     parts = [f"{candidate['name']} — {candidate['role']}"]
+    if candidate.get("value"):
+        parts.append(f'[value: "{candidate["value"]}"]')
     if candidate.get("href"):
         parts.append(f"→ {candidate['href']}")
     if disambiguate and candidate.get("scope"):
@@ -130,6 +137,15 @@ class TraceWriter:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+class NullWriter:
+    """No trace was asked for; steps are still built and returned."""
+
+    path: Path | None = None
+
+    def step(self, **fields: Any) -> dict[str, Any]:
+        return {"kind": "step", **fields}
 
 
 def read_trace(path: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:

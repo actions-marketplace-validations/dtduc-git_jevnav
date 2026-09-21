@@ -1,4 +1,4 @@
-"""Offline helpers: a Jev client that answers from a script, and a browser fixture."""
+"""Offline helpers: a Jev client that answers from a script, and fixture URLs."""
 
 from __future__ import annotations
 
@@ -9,65 +9,111 @@ from jevassert.client import JevClient
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+LOOP_DEFAULTS = {"status": "in_progress", "action": "click", "value_key": "none", "target": "none"}
+
 
 class FakeJev:
-    """A JevClient whose transport is a dict: intent keyword -> option name (or (name, p)).
+    """A JevClient whose transport answers from a script.
 
-    Matching is on the *option description* the model would see, so tests assert
-    against what the model is actually shown, not against internal ids.
+    Single questions match an intent keyword to an option name; goal-loop
+    requests (they carry a ``status`` question) consume ``script`` entries in
+    order: ``{"status": ..., "action": ..., "target": <option name>, "value_key": ...}``.
+    Matching is on the option description the model would see, so tests assert
+    against what the model is shown, not against internal ids.
     """
 
     def __init__(
-        self, answers: dict[str, str | tuple[str, float]], *, default: str = "none"
+        self,
+        answers: dict[str, str | tuple[str, float]] | None = None,
+        *,
+        default: str = "none",
+        script: list[dict[str, str]] | None = None,
+        confidence: float = 0.97,
     ) -> None:
-        self.answers = answers
+        self.answers = answers or {}
         self.default = default
+        self.script = list(script or [])
+        self.confidence = confidence
         self.calls: list[dict[str, Any]] = []
 
     def client(self, *, api_key: str = "test-key") -> JevClient:
         return JevClient(api_key=api_key, transport=self._transport)
 
     def _transport(self, method: str, url: str, headers: dict[str, str], body: dict[str, Any]):
-        question = body["questions"]["target"]
-        criteria: dict[str, str] = question["criteria"]
-        instructions = question["instructions"]
-        self.calls.append(
-            {"instructions": instructions, "criteria": criteria, "state": body["state"]}
+        questions = body["questions"]
+        self.calls.append({"state": body["state"], "questions": questions})
+        answers = (
+            self._loop_answers(questions)
+            if "status" in questions
+            else self._single_answers(questions)
         )
-        target, confidence = self._answer(instructions, criteria)
         return (
             200,
             {
                 "model": "jev-fake-1",
                 "usage": {"input_tokens": 120, "output_tokens": 8},
-                "answers": {
-                    "target": {
-                        "type": "choice",
-                        "choice": target,
-                        "confidence": confidence,
-                        "probabilities": {
-                            cid: (confidence if cid == target else 0.0) for cid in criteria
-                        },
-                    }
-                },
+                "answers": answers,
             },
             None,
         )
+
+    def _single_answers(self, questions: dict[str, Any]) -> dict[str, Any]:
+        criteria: dict[str, str] = questions["target"]["criteria"]
+        instructions = questions["target"]["instructions"]
+        choice, confidence = self._answer(instructions, criteria)
+        return {
+            "target": {
+                "type": "choice",
+                "choice": choice,
+                "confidence": confidence,
+                "probabilities": {cid: (confidence if cid == choice else 0.0) for cid in criteria},
+            }
+        }
+
+    def _loop_answers(self, questions: dict[str, Any]) -> dict[str, Any]:
+        step = self.script.pop(0) if self.script else {"status": "done"}
+        answers: dict[str, Any] = {}
+        for qid in ("status", "action", "value_key"):
+            if qid not in questions:
+                continue
+            choice = step.get(qid, LOOP_DEFAULTS[qid])
+            if qid == "value_key" and choice != "none":
+                assert choice in questions[qid]["criteria"], f"{choice!r} is not a context key"
+            answers[qid] = {
+                "type": "choice",
+                "choice": choice,
+                "confidence": self.confidence,
+                "probabilities": {choice: self.confidence},
+            }
+        criteria = questions["target"]["criteria"]
+        target = step.get("target", "none")
+        choice = "none" if target == "none" else self._find(criteria, target)
+        answers["target"] = {
+            "type": "choice",
+            "choice": choice,
+            "confidence": self.confidence,
+            "probabilities": {cid: (self.confidence if cid == choice else 0.0) for cid in criteria},
+        }
+        return answers
 
     def _answer(self, instructions: str, criteria: dict[str, str]) -> tuple[str, float]:
         for keyword, expected in self.answers.items():
             if keyword.casefold() not in instructions.casefold():
                 continue
-            name, confidence = expected if isinstance(expected, tuple) else (expected, 0.95)
+            name, confidence = (
+                expected if isinstance(expected, tuple) else (expected, self.confidence)
+            )
             if name == "none":
                 return "none", confidence
-            for cid, description in criteria.items():
-                if description.casefold().startswith(name.casefold()):
-                    return cid, confidence
-            raise AssertionError(
-                f"fake answer {name!r} matches no option in {list(criteria.values())}"
-            )
+            return self._find(criteria, name), confidence
         return self.default, 0.5
+
+    @staticmethod
+    def _find(criteria: dict[str, str], name: str) -> str:
+        for cid, description in criteria.items():
+            if description.casefold().startswith(name.casefold()):
+                return cid
+        raise AssertionError(f"fake answer {name!r} matches no option in {list(criteria.values())}")
 
 
 def fixture_url(name: str) -> str:

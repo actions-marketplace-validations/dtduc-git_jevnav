@@ -124,3 +124,92 @@ def test_replay_does_not_need_an_api_key(flow_file, tmp_path, monkeypatch):
     cli.main(["run", flow_file, "--trace", str(trace)])
     monkeypatch.setattr(cli, "_api_key", lambda: None)
     assert cli.main(["replay", str(trace)]) == 0
+
+
+GOAL_SCRIPT = [
+    {"action": "fill", "target": "Email", "value_key": "email"},
+    {"action": "click", "target": "Sign in"},
+]
+
+
+def loop_flow_url() -> str:
+    from helpers import fixture_url
+
+    return fixture_url("loop-app.html")
+
+
+def test_go_runs_a_goal_and_reports_it(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_client", lambda: FakeJev(script=GOAL_SCRIPT).client())
+    trace = tmp_path / "goal.trace.jsonl"
+    report = tmp_path / "goal.md"
+    code = cli.main(
+        [
+            "go",
+            "--goal",
+            "sign in with the demo account",
+            "--start",
+            loop_flow_url(),
+            "--context",
+            "email=demo@example.com",
+            "--success",
+            "#signed-in-as",
+            "--trace",
+            str(trace),
+            "--report",
+            str(report),
+        ]
+    )
+    assert code == 0
+    assert "**done** — outcome verified against the page" in report.read_text()
+    out = capsys.readouterr().out
+    assert "jevnav go — sign in with the demo account" in out
+    assert trace.exists()
+
+
+def test_go_exits_non_zero_when_the_goal_is_not_reached(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_client", lambda: FakeJev(script=[]).client())
+    code = cli.main(
+        [
+            "go",
+            "--goal",
+            "sign in",
+            "--start",
+            loop_flow_url(),
+            "--success",
+            "#signed-in-as",
+            "--trace",
+            str(tmp_path / "g.jsonl"),
+        ]
+    )
+    assert code == 1
+
+
+def test_go_json_output(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_client", lambda: FakeJev(script=GOAL_SCRIPT).client())
+    code = cli.main(
+        [
+            "go",
+            "--goal",
+            "sign in",
+            "--start",
+            loop_flow_url(),
+            "--context",
+            "email=demo@example.com",
+            "--success",
+            "#signed-in-as",
+            "--trace",
+            str(tmp_path / "g.jsonl"),
+            "--json",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["summary"]["verified"] is True
+    assert payload["steps"][0]["decision"]["status"] == "in_progress"
+
+
+def test_go_needs_well_formed_context(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "_client", lambda: FakeJev(script=[]).client())
+    code = cli.main(["go", "--goal", "x", "--start", loop_flow_url(), "--context", "oops"])
+    assert code == 2
+    assert "KEY=VALUE" in capsys.readouterr().err

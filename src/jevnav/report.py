@@ -85,6 +85,14 @@ def render_replay_report(result: dict[str, Any]) -> str:
     if result.get("swapped"):
         lines.append(f"- every step served from `{result['swapped']}`")
     lines.append(f"- failing steps: {result['failed'] or 'none'}")
+    if result.get("success"):
+        success = result["success"]
+        if success["verified"] is True:
+            lines.append(f"- success check: **verified** (`{success['selector']}` is visible)")
+        elif success["verified"] is False:
+            lines.append(f"- success check: **FAILED** (`{success['selector']}` is not visible)")
+        else:
+            lines.append(f"- success check: not run ({success.get('reason', 'needs --execute')})")
     lines.append("")
     lines.append("## Steps")
     lines.append("")
@@ -108,3 +116,54 @@ def render_replay_report(result: dict[str, Any]) -> str:
 def _cell(text: str, limit: int = 60) -> str:
     flat = " ".join(str(text).split()).replace("|", "\\|")
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def render_goal_report(
+    summary: dict[str, Any], records: list[dict[str, Any]], *, trace_path: str
+) -> str:
+    lines = [f"# jevnav go — {summary['goal']}", ""]
+    verified = summary.get("verified")
+    if summary["status"] == "done" and verified is True:
+        outcome = "**done** — outcome verified against the page"
+    elif summary["status"] == "done" and verified is None:
+        outcome = "**done** — the model's claim is not verified (pass `--success <selector>`)"
+    else:
+        outcome = f"**{summary['status']}**"
+    lines.append(f"- status: {outcome}")
+    if summary.get("reason"):
+        lines.append(f"- reason: {summary['reason']}")
+    lines.append(f"- trace: `{trace_path}`")
+    lines.append(
+        f"- steps: {summary['steps']} — auto **{summary['auto']}**, review "
+        f"**{summary['review']}**, blocked **{summary['blocked']}**"
+    )
+    latency = (
+        f"p50 {summary['latency_p50_ms']:.0f}ms, p95 {summary['latency_p95_ms']:.0f}ms"
+        if summary["latency_p50_ms"] is not None
+        else "n/a"
+    )
+    lines.append(f"- cost: ${summary['cost_usd']:.6f} · latency {latency}")
+    lines.append("")
+    lines.append("## Steps")
+    lines.append("")
+    lines.append("| # | status | action | target | p | gate | effect |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for record in records:
+        decision = record["decision"]
+        effect = (
+            "error: " + record["result"]["error"]
+            if record["result"].get("error")
+            else ("executed" if record["result"]["executed"] else "not executed")
+        )
+        lines.append(
+            "| {step} | {status} | {action} | {target} | {p} | {gate} | {effect} |".format(
+                step=record["step"],
+                status=decision.get("status") or "—",
+                action=decision.get("action") or "—",
+                target=_cell(decision.get("chosen_name") or decision.get("choice") or "—"),
+                p=_p(decision.get("confidence")),
+                gate=record["gate"]["verdict"],
+                effect=_cell(effect),
+            )
+        )
+    return "\n".join(lines) + "\n"

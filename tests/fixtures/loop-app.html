@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Console</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; }
+  nav { display: flex; gap: 12px; padding: 12px 24px; background: #111; color: #fff; }
+  nav a { color: #fff; }
+  main { padding: 24px; max-width: 640px; }
+  fieldset { border: 1px solid #ccc; margin: 16px 0; padding: 12px; }
+  label { display: block; margin: 8px 0 2px; }
+  input { padding: 6px; width: 100%; box-sizing: border-box; }
+  button { padding: 8px 14px; margin-top: 10px; }
+  section { display: none; }
+  section.visible { display: block; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="#home" id="nav-home">Home</a>
+  <a href="#pricing" id="nav-pricing">Pricing</a>
+  <a href="#support" id="nav-support">Support</a>
+</nav>
+<main>
+  <h1>Acme Console</h1>
+
+  <form id="login" onsubmit="return false">
+    <fieldset>
+      <legend>Sign in</legend>
+      <label for="login-email">Email</label>
+      <input id="login-email" name="email" type="email" placeholder="you@example.com">
+      <label for="login-password">Password</label>
+      <input id="login-password" name="password" type="password">
+      <button id="login-submit" data-testid="login-submit" type="submit">Sign in</button>
+    </fieldset>
+  </form>
+
+  <p id="signed-in-as" style="display:none">Signed in as <span id="who">nobody</span>.
+    <button id="sign-out">Sign out</button>
+  </p>
+
+  <section id="home">
+    <h2>Home</h2>
+    <p>Welcome to your dashboard.</p>
+  </section>
+
+  <section id="pricing">
+    <h2>Pricing</h2>
+    <p>Plans for every team size.</p>
+    <button id="choose-plan" data-testid="choose-plan">Choose a plan</button>
+  </section>
+
+  <section id="support">
+    <h2>Support</h2>
+    <p>We reply within one business day.</p>
+    <button id="open-ticket" data-testid="open-ticket">Open a ticket</button>
+  </section>
+</main>
+<script>
+  const show = (id) => {
+    document.querySelectorAll('section').forEach((s) => s.classList.toggle('visible', s.id === id));
+  };
+  show('home');
+  document.querySelectorAll('nav a').forEach((a) =>
+    a.addEventListener('click', (e) => { e.preventDefault(); show(a.getAttribute('href').slice(1)); })
+  );
+  document.querySelector('#login-submit').addEventListener('click', () => {
+    document.querySelector('#who').textContent = document.querySelector('#login-email').value || 'demo@example.com';
+    document.querySelector('#login').style.display = 'none';
+    document.querySelector('#signed-in-as').style.display = 'block';
+    show('home');
+  });
+  document.querySelector('#sign-out').addEventListener('click', () => {
+    document.querySelector('#login').style.display = 'block';
+    document.querySelector('#signed-in-as').style.display = 'none';
+    show('home');
+  });
+</script>
+</body>
+</html>

@@ -16,11 +16,14 @@ def test_fingerprint_normalizes_case_and_whitespace():
     assert fingerprint("button", "sign in") == fingerprint("BUTTON", " Sign  in ")
 
 
-def test_dom_hash_ignores_order_but_not_identity():
+def test_dom_hash_ignores_order_but_not_identity_or_value():
     a = [make_candidate("c1", "button", "Sign in"), make_candidate("c2", "link", "Home")]
     b = [make_candidate("c9", "link", "Home"), make_candidate("c4", "button", "Sign in")]
     assert dom_hash(a) == dom_hash(b)
     assert dom_hash(a) != dom_hash(a[:1])
+    filled = [make_candidate("c1", "textbox", "Email", value="a@b.c")]
+    empty = [make_candidate("c1", "textbox", "Email")]
+    assert dom_hash(filled) != dom_hash(empty)
 
 
 def test_candidate_carries_its_fingerprint():
@@ -74,3 +77,9 @@ def test_trace_requires_steps(tmp_path):
     path.write_text('{"kind": "run"}\n')
     with pytest.raises(ValueError, match="no steps"):
         read_trace(path)
+
+
+def test_describe_shows_a_current_value_and_masks_nothing_itself():
+    candidate = make_candidate("c1", "textbox", "Email", value="a@b.c")
+    assert describe(candidate) == 'Email — textbox [value: "a@b.c"]'
+    assert candidate["fp"] == "textbox|email"

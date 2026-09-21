@@ -9,10 +9,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import __version__
-from .flow import FlowError, load_flow, recorded_url, run_flow, summarize_run
+from .agent import run_goal, summarize_goal
+from .flow import FlowError, load_flow, recorded_url, resolve_url, run_flow, summarize_run
 from .gates import load_gates
 from .replay import replay_trace
-from .report import render_replay_report, render_run_report
+from .report import render_goal_report, render_replay_report, render_run_report
 from .trace import TraceWriter
 
 EXIT_OK = 0
@@ -112,10 +113,72 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(report, end="")
-    if result["failed"]:
-        print(f"\nreplay failed: steps {result['failed']}", file=sys.stderr)
+    success = result.get("success") or {}
+    if result["failed"] or success.get("verified") is False:
+        failed = [
+            f"steps {result['failed']}" if result["failed"] else "",
+            "success check" if success.get("verified") is False else "",
+        ]
+        print(f"\nreplay failed: {', '.join(part for part in failed if part)}", file=sys.stderr)
         return EXIT_FAILED
     return EXIT_OK
+
+
+def parse_context(pairs: list[str]) -> dict[str, str]:
+    context: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise FlowError(f"--context needs KEY=VALUE, got {pair!r}")
+        key, value = pair.split("=", 1)
+        context[key] = value
+    return context
+
+
+def cmd_go(args: argparse.Namespace) -> int:
+    context = parse_context(args.context)
+    trace_path = Path(args.trace or "goal.trace.jsonl")
+    client = _client()
+    try:
+        with _session(args.headed) as page:
+            with TraceWriter(
+                trace_path,
+                flow="goal",
+                goal=args.goal,
+                context_keys=list(context),
+                success=args.success,
+                max_steps=args.max_steps,
+                model=args.model,
+                tool=f"jevnav/{__version__}",
+            ) as writer:
+                result = run_goal(
+                    args.goal,
+                    page=page,
+                    client=client,
+                    gates=load_gates(args.gates),
+                    writer=writer,
+                    model=args.model,
+                    context=context,
+                    start=resolve_url(args.start, Path.cwd()) if args.start else None,
+                    success=args.success,
+                    max_steps=args.max_steps,
+                    dry_run=args.dry_run,
+                    allow_risky=args.allow_risky,
+                    settle_ms=args.settle_ms,
+                )
+    finally:
+        client.close()
+    summary = summarize_goal(result)
+    report = render_goal_report(summary, result["steps"], trace_path=str(trace_path))
+    if args.report:
+        Path(args.report).write_text(report)
+    if args.json:
+        print(json.dumps({"summary": summary, "steps": result["steps"]}, indent=2))
+    else:
+        print(report, end="")
+        print(f"trace: {trace_path}")
+    if summary["status"] == "done" and summary["verified"] is not False:
+        return EXIT_OK
+    return EXIT_FAILED
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:
@@ -160,6 +223,35 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--json", action="store_true")
     replay.set_defaults(func=cmd_replay)
 
+    go = sub.add_parser("go", help="let Jev drive towards a goal: decide, act, verify, record")
+    go.add_argument(
+        "--goal", required=True, help='what to achieve, e.g. "sign in with the demo account"'
+    )
+    go.add_argument("--start", help="URL to open first")
+    go.add_argument(
+        "--context",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="values the goal may need; ${ENV} refs are resolved and never traced",
+    )
+    go.add_argument("--success", help="selector that must be visible when the goal is done")
+    go.add_argument("--max-steps", type=int, default=8)
+    go.add_argument("--settle-ms", type=int, default=300)
+    go.add_argument("--trace", help="where to write the trace (default goal.trace.jsonl)")
+    go.add_argument("--gates", help="gates.yaml")
+    go.add_argument("--report", help="write a markdown report here")
+    go.add_argument("--model", default="jev-latest")
+    go.add_argument("--headed", action="store_true")
+    go.add_argument("--dry-run", action="store_true", help="decide and record, but never act")
+    go.add_argument(
+        "--allow-risky",
+        action="store_true",
+        help="act on decisions the gate would send to review (sandboxes only)",
+    )
+    go.add_argument("--json", action="store_true")
+    go.set_defaults(func=cmd_go)
+
     mcp = sub.add_parser("mcp", help="serve jevnav as an MCP tool (needs jevnav[mcp])")
     mcp.add_argument("--start", help="initial URL to open")
     mcp.add_argument("--trace", help="record every decision to this trace")
@@ -172,7 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "run" and not _api_key():
+    if args.command in {"run", "go"} and not _api_key():
         print(
             "TYPESAFE_API_KEY is not set (and ~/.config/typesafe/apikey.txt is missing)",
             file=sys.stderr,

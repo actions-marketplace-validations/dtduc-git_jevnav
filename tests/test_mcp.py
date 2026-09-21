@@ -135,7 +135,7 @@ def test_tools_are_registered(monkeypatch):
     monkeypatch.setattr(mcp_module, "Session", FakeSession)
     assert mcp_module.serve(start=None, trace=None, gates=None) == 0
     assert captured["name"] == "jevnav"
-    assert captured["tools"] == ["browse", "page_state", "summary"]
+    assert captured["tools"] == ["browse", "goal", "page_state", "summary"]
     assert captured["ran"] is True
 
 
@@ -145,3 +145,30 @@ def test_mcp_returns_json(session, monkeypatch):
         json.dumps(session.browse("Sign in to the existing account", "click", None))
     )
     assert payload["status"] == "auto"
+
+
+def test_goal_tool_drives_the_browser(session):
+    from helpers import fixture_url
+
+    session.page.goto(fixture_url("loop-app.html"))
+    session.client = FakeJev(
+        script=[
+            {"action": "fill", "target": "Email", "value_key": "email"},
+            {"action": "click", "target": "Sign in"},
+        ]
+    ).client()
+    outcome = session.goal("sign in with the demo account", {"email": "demo@example.com"})
+    assert outcome["status"] == "done"
+    assert outcome["steps"] == 3
+    assert session.page.is_visible("#signed-in-as")
+    assert session.summary()["steps"] == 3
+
+
+def test_goal_tool_never_acts_on_a_review(session):
+    from helpers import fixture_url
+
+    session.page.goto(fixture_url("loop-app.html"))
+    session.client = FakeJev(script=[{"action": "click", "target": "Home"}]).client()
+    outcome = session.goal("delete my account", {})
+    assert outcome["status"] == "review"
+    assert session.page.locator("#nav-home").is_visible()

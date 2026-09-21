@@ -29,6 +29,11 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
 - The candidate description format is measured, not taste: the scope is added
   only where names collide, because adding it everywhere cost accuracy
   (2026-09-21, `describe()` docstring). Change wording only with numbers.
+- Loop mode (`agent.py`) is not gated by a high confidence on purpose:
+  measured correct loop decisions at p 0.41–0.99 and wrong ones at 0.39–0.47.
+  Safety comes from the deterministic checks (role/value validation, progress
+  detection, risky patterns) and from verifying `--success`. Do not "fix" the
+  loop by raising `loop_min_confidence`; fix the check that is missing.
 - Tests never touch the network or the real Jev endpoint: `tests/helpers.py`
   has a `FakeJev` whose transport answers from a script.
 - `review` and `blocked` decisions never execute an action. Do not add a flag

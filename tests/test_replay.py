@@ -174,6 +174,7 @@ def test_a_portable_trace_replays_without_flags(tmp_path, page):
                     "href": None,
                     "placeholder": None,
                     "scope": None,
+                    "value": None,
                     "disabled": False,
                     "in_viewport": True,
                 }
@@ -183,3 +184,34 @@ def test_a_portable_trace_replays_without_flags(tmp_path, page):
     result = replay_trace(path, page=page)
     assert result["failed"] == []
     assert result["results"][0]["page_identical"] is True
+
+
+def test_replay_verifies_a_recorded_success_selector(tmp_path, page):
+    from helpers import FakeJev, fixture_url
+
+    from jevnav.agent import run_goal
+    from jevnav.gates import default_gates
+
+    url = fixture_url("loop-app.html")
+    path = tmp_path / "goal.trace.jsonl"
+    script = [
+        {"action": "fill", "target": "Email", "value_key": "email"},
+        {"action": "click", "target": "Sign in"},
+    ]
+    with TraceWriter(path, flow="goal", goal="sign in", success="#signed-in-as") as writer:
+        run_goal(
+            "sign in",
+            page=page,
+            client=FakeJev(script=script).client(),
+            gates=default_gates(),
+            writer=writer,
+            context={"email": "demo@example.com"},
+            start=url,
+            success="#signed-in-as",
+        )
+    without = replay_trace(path, page=page)
+    assert without["success"]["verified"] is None
+    assert without["failed"] == []
+    with_execute = replay_trace(path, page=page, execute=True, settle_ms=0)
+    assert with_execute["success"] == {"selector": "#signed-in-as", "verified": True}
+    assert with_execute["failed"] == []

@@ -224,7 +224,9 @@ def run_flow(
 def summarize_run(records: list[dict[str, Any]]) -> dict[str, Any]:
     scored = [r for r in records if r["result"]["correct"] is not None]
     gates = [r["gate"]["verdict"] for r in records]
-    latencies = [r["decision"]["latency_ms"] for r in records if r["decision"].get("latency_ms")]
+    latencies = [
+        r["decision"]["latency_ms"] for r in records if r["decision"].get("latency_ms") is not None
+    ]
     return {
         "steps": len(records),
         "auto": gates.count("auto"),

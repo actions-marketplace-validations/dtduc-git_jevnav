@@ -15,6 +15,7 @@ from typing import Any
 
 from . import __version__
 from . import page as page_module
+from .agent import run_goal, summarize_goal
 from .decide import ask, failed_decision
 from .flow import action_runtime, summarize_run
 from .gates import AUTO, load_gates, verdict
@@ -144,6 +145,25 @@ class Session:
         self.steps.append(step)
         return out
 
+    def goal(
+        self, goal: str, context: dict[str, str] | None = None, max_steps: int = 8
+    ) -> dict[str, Any]:
+        """Drive the browser towards a goal, one gated Jev decision per step."""
+        from .trace import NullWriter
+
+        result = run_goal(
+            goal,
+            page=self.page,
+            client=self.client,
+            gates=self.gates,
+            writer=self.writer or NullWriter(),
+            model=self.model,
+            context=context or {},
+            max_steps=max_steps,
+        )
+        self.steps.extend(result["steps"])
+        return summarize_goal(result)
+
     def page_state(self) -> dict[str, Any]:
         candidates, total, dropped = page_module.extract(self.page)
         return {
@@ -199,6 +219,21 @@ def serve(
         executed; ``review`` means a human should confirm first.
         """
         return json.dumps(session.browse(intent, action, value), ensure_ascii=False)
+
+    @mcp.tool()
+    def goal(goal: str, context_json: str = "{}", max_steps: int = 8) -> str:
+        """Drive the browser towards a goal: Jev decides every step, jevnav acts.
+
+        ``context_json`` is a JSON object of values the goal may need, e.g.
+        {"email": "a@b.c", "password": "${PW}"}. Returns the outcome (done,
+        stuck, review, ...), the steps taken, cost and whether the outcome was
+        verified. Risky steps stop the loop and come back unexecuted.
+        """
+        try:
+            context = json.loads(context_json or "{}")
+        except json.JSONDecodeError as error:
+            return json.dumps({"status": "error", "error": f"context_json is not JSON: {error}"})
+        return json.dumps(session.goal(goal, context, max_steps), ensure_ascii=False)
 
     @mcp.tool()
     def page_state() -> str:

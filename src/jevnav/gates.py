@@ -23,6 +23,12 @@ from typing import Any
 import yaml
 
 DEFAULT_MIN_CONFIDENCE = 0.9
+# Loop mode asks four questions at once, and the target confidence runs lower
+# even when the decision is right (measured 2026-09-21: correct loop decisions
+# at p 0.41-0.99, wrong ones at 0.39-0.47 — p does not separate them). The loop
+# is kept safe by role/value validation, progress detection, the risky patterns
+# and the success verification, not by a high threshold.
+DEFAULT_LOOP_MIN_CONFIDENCE = 0.5
 DEFAULT_RISKY = [
     r"\b(delete|remove|destroy|drop)\b",
     r"\b(pay|payment|purchase|buy|checkout|transfer|withdraw|refund)\b",
@@ -41,6 +47,7 @@ BLOCKED = "blocked"
 def default_gates() -> dict[str, Any]:
     return {
         "min_confidence": DEFAULT_MIN_CONFIDENCE,
+        "loop_min_confidence": DEFAULT_LOOP_MIN_CONFIDENCE,
         "risky": list(DEFAULT_RISKY),
         "truncated": REVIEW,
         "intents": {},
@@ -65,16 +72,18 @@ def load_gates(path: str | Path | None) -> dict[str, Any]:
     return gates
 
 
-def threshold_for(intent: str, gates: dict[str, Any]) -> float:
+def threshold_for(
+    intent: str, gates: dict[str, Any], *, default_key: str = "min_confidence"
+) -> float:
     """Per-intent override by fnmatch pattern; the most specific pattern wins."""
     best: tuple[int, float] | None = None
     for pattern, overrides in gates.get("intents", {}).items():
         if fnmatch.fnmatch(intent.casefold(), pattern.casefold()):
-            confidence = float(overrides.get("min_confidence", gates["min_confidence"]))
+            confidence = float(overrides.get("min_confidence", gates[default_key]))
             score = (len(pattern), confidence)
             if best is None or score > best:
                 best = score
-    return best[1] if best else float(gates["min_confidence"])
+    return best[1] if best else float(gates[default_key])
 
 
 def risk_match(intent: str, candidate: dict[str, Any] | None, gates: dict[str, Any]) -> str | None:
@@ -100,6 +109,7 @@ def verdict(
     candidate: dict[str, Any] | None,
     dropped: int,
     gates: dict[str, Any],
+    default_key: str = "min_confidence",
 ) -> tuple[str, str | None]:
     """Classify one recorded decision. Returns (verdict, reason)."""
     if decision.get("error"):
@@ -114,7 +124,7 @@ def verdict(
     risk = risk_match(intent, candidate, gates)
     if risk:
         return REVIEW, f"risky action matched {risk!r}"
-    threshold = threshold_for(intent, gates)
+    threshold = threshold_for(intent, gates, default_key=default_key)
     if confidence < threshold:
         return REVIEW, f"p={confidence:.2f} below threshold {threshold:.2f}"
     return AUTO, None

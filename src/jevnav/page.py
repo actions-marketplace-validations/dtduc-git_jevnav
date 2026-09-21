@@ -95,6 +95,23 @@ CANDIDATE_JS = r"""
     return textOf(el);
   };
 
+  const fieldValue = (el) => {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (tag === 'select') {
+      const option = el.selectedOptions && el.selectedOptions[0];
+      return option && option.value ? option.textContent.trim().slice(0, 40) : null;
+    }
+    if (type === 'checkbox' || type === 'radio') {
+      return el.checked ? 'checked' : null;
+    }
+    if (type === 'password') {
+      return el.value ? '••••' : null;
+    }
+    const raw = (el.value || '').trim();
+    return raw ? raw.slice(0, 40) : null;
+  };
+
   const scopeOf = (el) => {
     const cut = (t) => (t || '').replace(/\s+/g, ' ').trim().slice(0, 60);
     const fieldset = el.closest('fieldset');
@@ -139,6 +156,7 @@ CANDIDATE_JS = r"""
       href: href ? href.slice(0, 120) : null,
       placeholder: (el.getAttribute('placeholder') || '').slice(0, 60) || null,
       scope: scopeOf(el),
+      value: fieldValue(el),
       disabled: !!el.disabled,
       in_viewport: rect.bottom > 0 && rect.top < innerHeight &&
                    rect.right > 0 && rect.left < innerWidth,
@@ -154,7 +172,7 @@ CANDIDATE_JS = r"""
     dropped: Math.max(0, total - kept.length),
     candidates: kept.map((c, i) => ({
       cid: 'c' + (i + 1), role: c.role, name: c.name, tag: c.tag, type: c.type,
-      href: c.href, placeholder: c.placeholder, scope: c.scope,
+      href: c.href, placeholder: c.placeholder, scope: c.scope, value: c.value,
       disabled: c.disabled, in_viewport: c.in_viewport,
     })),
   };
@@ -175,6 +193,7 @@ def extract(page: Any) -> tuple[list[dict[str, Any]], int, int]:
             href=c["href"],
             placeholder=c["placeholder"],
             scope=c["scope"],
+            value=c["value"],
             disabled=c["disabled"],
             in_viewport=c["in_viewport"],
         )

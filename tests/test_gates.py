@@ -93,6 +93,29 @@ def test_truncated_candidate_list_is_review():
     assert "12 candidates" in reason
 
 
+def test_loop_mode_uses_its_own_lower_threshold():
+    gates = default_gates()
+    assert threshold_for("save", gates) == 0.9
+    assert threshold_for("save", gates, default_key="loop_min_confidence") == 0.5
+    assert (
+        verdict(decision(confidence=0.6), intent="save", candidate=BUTTON, dropped=0, gates=gates)[
+            0
+        ]
+        == REVIEW
+    )
+    assert (
+        verdict(
+            decision(confidence=0.6),
+            intent="save",
+            candidate=BUTTON,
+            dropped=0,
+            gates=gates,
+            default_key="loop_min_confidence",
+        )[0]
+        == AUTO
+    )
+
+
 def test_per_intent_override_wins_over_the_global_threshold():
     gates = default_gates()
     gates["intents"] = {"delete the *": {"min_confidence": 0.99}}

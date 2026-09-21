@@ -23,7 +23,8 @@ jobs:
         run: uv run pytest
 
   replay:
-    # The action as users get it, run against the committed example trace.
+    # The action as users get it, run against the committed example traces:
+    # once resolving decisions, once re-running a whole recorded agent run.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -32,5 +33,11 @@ jobs:
           trace: examples/local-demo/demo.trace.jsonl
           report: replay-report.md
           version: local
+      - uses: ./
+        with:
+          trace: examples/go-demo/demo.trace.jsonl
+          execute: "true"
+          report: replay-go-report.md
+          version: local
       - name: Report
-        run: cat replay-report.md
+        run: cat replay-report.md replay-go-report.md

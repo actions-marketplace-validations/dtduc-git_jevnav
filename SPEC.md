@@ -33,7 +33,7 @@ complete or broken, never half-read).
 | `url`, `title` | string | page state the decision was made on |
 | `total_on_page` | int | visible interactive elements found |
 | `dropped` | int | candidates not shown to the model (cap is 255) |
-| `dom_hash` | string | hash of the candidate identities, not of the page bytes |
+| `dom_hash` | string | hash of the candidate set as the model sees it (identity + current value), not of the page bytes |
 | `candidates` | array | see below |
 | `expected_cid` | string \| null | ground truth, when the flow declared `expect`; `"none"` means "no element should match" |
 | `decision` | object | `{choice, chosen_fp, chosen_name, confidence, probabilities, model, latency_ms, usage, cost_usd, error}` |
@@ -118,3 +118,45 @@ unattended:
 Verdicts: `auto` (act), `review` (a human confirms first), `blocked` (no
 decision was possible: `none`, or the model call failed). `blocked` and
 `review` never execute an action.
+
+## Goal loop (`jevnav go`, MCP `goal`)
+
+One request per step answers four questions together:
+
+| question | type | meaning |
+|---|---|---|
+| `status` | choice | `in_progress` \| `done` \| `stuck` |
+| `action` | choice | `click` \| `fill` \| `select` \| `check` \| `hover` \| `press` |
+| `target` | choice | the candidate list (option keys are `cid`s) plus `none` |
+| `value_key` | choice | a context key, or `none` (only asked when the goal has context) |
+
+The state block carries the goal, the step number, the context *keys* (never
+values), the current page (title, URL), a digest of the visible text (at most
+700 characters) and the numbered history of steps with their effect on the page.
+
+Step records in a loop trace use the same shape as a flow trace, plus:
+
+| field | meaning |
+|---|---|
+| `decision.status`, `decision.status_confidence` | the model's view of the goal |
+| `decision.action`, `decision.action_confidence` | the action it chose |
+| `decision.value_key` | the context key it chose, if any |
+| `value_source` | `model` (it picked the key) or `name-match` (the field name matched a key) |
+| `gate.verdict` | as in a flow, plus `n/a` for the step that stopped the loop (`done`) |
+
+Loop rules, all deterministic:
+
+- `fill` on a role that cannot take text → `blocked`, nothing runs.
+- `fill`/`select` with no context value for the field → `blocked`.
+- The same page state twice in a row → `no_progress`, the run stops.
+- `--max-steps` (default 8) → `max_steps`.
+- `done` stops the run; the claim is verified against `--success` when given:
+  `verified: true` (the selector is visible), `verified: false` → the run's
+  status becomes `unverified` and the command fails, or `verified: null` when no
+  selector was given (reported, not hidden).
+- The loop's gate uses `loop_min_confidence` (default 0.5), not
+  `min_confidence`: loop decisions carry a lower calibrated p by construction
+  (measured: correct decisions at p 0.41–0.99, wrong at 0.39–0.47).
+
+`replay --execute` re-runs a loop trace and re-checks the recorded `success`
+selector, so an agent run becomes a deterministic CI test.

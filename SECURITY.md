@@ -8,11 +8,16 @@ vulnerability.
 
 ## What leaves your machine
 
-`jevnav run` sends one request per decision to your configured Jev endpoint
-(`TYPESAFE_BASE_URL`, default `https://api.typesafe.ai`). That request contains
-the page URL, the page title and the candidate list — element roles, accessible
-names, `href`s and placeholders. It never contains page content, screenshots,
-cookies or form values.
+`jevnav run` and `jevnav go` send one request per decision to your configured
+Jev endpoint (`TYPESAFE_BASE_URL`, default `https://api.typesafe.ai`). That
+request contains the page URL, the page title, the candidate list — element
+roles, accessible names, `href`s, placeholders — and, for candidates that hold
+one, the current field value (password fields are masked to `••••`).
+
+`jevnav go` also sends a digest of the page's visible text (headings, labels,
+paragraph text; at most 700 characters), because judging "is the goal done?"
+needs the page, not just its controls. Scripted flows (`jevnav run`) send no
+page text. Neither ever sends screenshots, cookies or storage.
 
 `jevnav replay` sends nothing: it re-resolves recorded decisions against the
 page locally, with no model call. There is no telemetry, no analytics and no

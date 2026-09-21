@@ -106,3 +106,21 @@ def test_execute_fp_refuses_a_missing_fingerprint(page, app_url):
     page.goto(app_url)
     with pytest.raises(RuntimeError, match="0 candidates match"):
         page_module.execute_fp(page, "button|gone", {"type": "click"}, settle_ms=0)
+
+
+def test_extraction_reports_field_values_and_masks_passwords(page, app_url):
+    page.goto(app_url)
+    page.fill("#login-email", "demo@example.com")
+    page.fill("#login-password", "hunter2")
+    candidates, _, _ = extract(page)
+    assert by_name(candidates, "Email")["value"] == "demo@example.com"
+    assert by_name(candidates, "Password")["value"] == "••••"
+
+
+def test_a_filled_field_is_visible_in_the_model_description(page, app_url):
+    page.goto(app_url)
+    page.fill("#login-email", "demo@example.com")
+    candidates, _, _ = extract(page)
+    from jevnav.trace import describe
+
+    assert '[value: "demo@example.com"]' in describe(by_name(candidates, "Email"))

@@ -27,7 +27,9 @@ ERROR = "error"
 FAILING = {CHANGED, AMBIGUOUS, ERROR}
 
 
-def replay_step(page: Any, step: dict[str, Any], *, url: str | None = None) -> dict[str, Any]:
+def replay_step(
+    page: Any, step: dict[str, Any], *, url: str | None = None, force_navigate: bool = False
+) -> dict[str, Any]:
     """Re-resolve one recorded decision against the page as it is now."""
     target = url or step["url"]
     recorded = {c["cid"]: c for c in step["candidates"]}
@@ -47,7 +49,7 @@ def replay_step(page: Any, step: dict[str, Any], *, url: str | None = None) -> d
     }
     result["navigated"] = False
     try:
-        if page.url != target:
+        if force_navigate or page.url != target:
             page.goto(target, wait_until="domcontentloaded")
             page.wait_for_timeout(300 if not target.startswith("file:") else 0)
             result["navigated"] = True
@@ -101,19 +103,19 @@ def replay_trace(
     settle_ms: int = 300,
 ) -> dict[str, Any]:
     """Replay every step of a trace. ``swap`` points all steps at one local file."""
-    _, steps = read_trace(trace_path)
+    run, steps = read_trace(trace_path)
     swap_url = None
     if swap:
         swap_url = str(swap) if "://" in str(swap) else Path(swap).resolve().as_uri()
     base_dir = Path(trace_path).resolve().parent
     results: list[dict[str, Any]] = []
-    for step in steps:
+    for index, step in enumerate(steps):
         target = swap_url or portable_url(step["url"], base_dir)
-        result = replay_step(page, step, url=target)
+        result = replay_step(page, step, url=target, force_navigate=index == 0)
         if execute and result["verdict"] in {OK, MOVED}:
             try:
                 action = action_for_replay(step["action"])
-                if action["type"] != "none":
+                if action["type"] != "none" and result.get("chosen_fp"):
                     page_module.execute_fp(page, result["chosen_fp"], action, settle_ms=settle_ms)
                 result["executed"] = True
             except Exception as error:
@@ -122,12 +124,29 @@ def replay_trace(
                 result["reason"] = f"action failed: {type(error).__name__}: {error}"
         results.append(result)
     counts = Counter(r["verdict"] for r in results)
+    success: dict[str, Any] | None = None
+    if run.get("success"):
+        selector = run["success"]
+        if execute:
+            try:
+                verified = page.locator(selector).first.is_visible()
+            except Exception:
+                verified = False
+            success = {"selector": selector, "verified": verified}
+        else:
+            success = {
+                "selector": selector,
+                "verified": None,
+                "reason": "needs --execute to re-run the actions",
+            }
     return {
         "trace": str(trace_path),
+        "goal": run.get("goal"),
         "swapped": str(swap) if swap else None,
         "steps": len(results),
         "counts": dict(counts),
         "failed": [r["step"] for r in results if r["verdict"] in FAILING],
+        "success": success,
         "results": results,
     }
 
