@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "jevnav — browser decisions you can replay",
+    "output": "docs/architecture.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "views": [
+      {
+        "id": "decision",
+        "label": "One decision",
+        "focus": [
+          "caller",
+          "mcp",
+          "cli",
+          "shortlist",
+          "jev",
+          "gate",
+          "act",
+          "browser"
+        ],
+        "note": "The caller gives an intent; jevnav extracts a shortlist, Jev picks, the gate decides, the action runs."
+      },
+      {
+        "id": "evidence",
+        "label": "Evidence and replay",
+        "focus": [
+          "gate",
+          "act",
+          "trace",
+          "replay",
+          "browser"
+        ],
+        "note": "Every decision lands in the trace; replay re-resolves it offline in CI, with no model call."
+      },
+      {
+        "id": "loops",
+        "label": "Other loops",
+        "focus": [
+          "play",
+          "observe",
+          "cli",
+          "browser",
+          "jev"
+        ],
+        "note": "Play mode drives real-time games from a caller-supplied state probe; the side tools are the agent's eyes."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "caller",
+      "type": "external",
+      "label": "Agent or human",
+      "sublabel": "MCP client or shell",
+      "pos": [
+        30,
+        260
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "backend",
+      "label": "jevnav MCP",
+      "sublabel": "stdio, 15 tools",
+      "pos": [
+        210,
+        180
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "ready in 22ms"
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "jevnav CLI",
+      "sublabel": "run · go · play · replay",
+      "pos": [
+        210,
+        340
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "jev",
+      "type": "external",
+      "label": "Jev",
+      "sublabel": "System One · typed questions",
+      "pos": [
+        610,
+        260
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "tag": "p50 312ms · $0.00004"
+    },
+    {
+      "id": "gate",
+      "type": "security",
+      "label": "Gate",
+      "sublabel": "auto · review · blocked",
+      "pos": [
+        810,
+        260
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "risky ⇒ review"
+    },
+    {
+      "id": "act",
+      "type": "backend",
+      "label": "Act",
+      "sublabel": "click · fill · select",
+      "pos": [
+        810,
+        470
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "role locator"
+    },
+    {
+      "id": "shortlist",
+      "type": "backend",
+      "label": "Candidate shortlist",
+      "sublabel": "role + accessible name",
+      "pos": [
+        400,
+        260
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "≤120, ranked"
+    },
+    {
+      "id": "browser",
+      "type": "cloud",
+      "label": "Browser",
+      "sublabel": "fresh · profile · CDP",
+      "pos": [
+        570,
+        470
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "trace",
+      "type": "database",
+      "label": "Trace JSONL",
+      "sublabel": "shortlist + decision + verify",
+      "pos": [
+        610,
+        110
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "replay",
+      "type": "backend",
+      "label": "replay",
+      "sublabel": "offline, no model call",
+      "pos": [
+        810,
+        110
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "exit 1 on change"
+    },
+    {
+      "id": "observe",
+      "type": "backend",
+      "label": "Side tools",
+      "sublabel": "console · network · read_js · tabs",
+      "pos": [
+        30,
+        470
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "never traced"
+    },
+    {
+      "id": "play",
+      "type": "backend",
+      "label": "Play mode",
+      "sublabel": "state probe → Jev · action set",
+      "pos": [
+        210,
+        470
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "5 decisions/s"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Local machine — no telemetry, traces stay here",
+      "wraps": [
+        "mcp",
+        "cli",
+        "shortlist",
+        "gate",
+        "act",
+        "browser",
+        "trace",
+        "replay",
+        "observe",
+        "play"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "caller-mcp",
+      "from": "caller",
+      "to": "mcp",
+      "variant": "emphasis"
+    },
+    {
+      "id": "caller-cli",
+      "from": "caller",
+      "to": "cli"
+    },
+    {
+      "id": "mcp-shortlist",
+      "from": "mcp",
+      "to": "shortlist",
+      "label": "intent"
+    },
+    {
+      "id": "cli-shortlist",
+      "from": "cli",
+      "to": "shortlist"
+    },
+    {
+      "id": "shortlist-jev",
+      "from": "shortlist",
+      "to": "jev",
+      "label": "choices",
+      "variant": "emphasis"
+    },
+    {
+      "id": "jev-gate",
+      "from": "jev",
+      "to": "gate"
+    },
+    {
+      "id": "gate-act",
+      "from": "gate",
+      "to": "act",
+      "label": "auto",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 90
+    },
+    {
+      "id": "act-browser",
+      "from": "act",
+      "to": "browser",
+      "label": "acts"
+    },
+    {
+      "id": "browser-shortlist",
+      "from": "browser",
+      "to": "shortlist",
+      "label": "DOM, in-viewport first",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "gate-trace",
+      "from": "gate",
+      "to": "trace",
+      "variant": "dashed"
+    },
+    {
+      "id": "trace-replay",
+      "from": "trace",
+      "to": "replay",
+      "label": "same JSONL",
+      "variant": "emphasis",
+      "labelDy": -22
+    },
+    {
+      "id": "caller-observe",
+      "from": "caller",
+      "to": "observe",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "cli-play",
+      "from": "cli",
+      "to": "play",
+      "label": "play mode",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ]
+}

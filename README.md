@@ -276,6 +276,18 @@ acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
   fingerprint — never by position — so a shifted page cannot click the wrong
   thing.
 
+## Architecture
+
+[![jevnav architecture](docs/architecture.png)](docs/architecture.html)
+
+`docs/architecture.html` is the interactive version (pan, zoom, themes, three
+guided views: one decision, evidence and replay, the other loops); the spec it
+was built from is `docs/architecture.archify.json`. In one line: the caller
+gives an intent, jevnav reads a ranked shortlist from the browser, Jev picks
+with a calibrated probability, the gate decides whether that may run unattended,
+the action goes back through the DOM, and every step lands in a trace that
+`replay` re-resolves offline.
+
 ## Benchmarks
 
 `benchmarks/mcp-compare.py` measures jevnav and chrome-devtools-mcp on the same
