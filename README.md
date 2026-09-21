@@ -260,9 +260,9 @@ Tools:
 | `styles(selector, props, limit)` | computed styles of the matching elements |
 | `route(pattern, status, body, abort)` / `unroute(pattern)` | stub or block requests (testing) |
 | `trace_start()` / `trace_stop(path)` | a Playwright trace zip for `playwright show-trace` |
-| `perf_metrics()`, `heap_snapshot(path)` | Chromium counters and a heap snapshot |
+| `perf_metrics()`, `heap_snapshot(path)` | Chromium counters and a heap snapshot (best-effort: for real profiling use chrome-devtools) |
 | `emulate(cpu_throttle, network_conditions, …)` | CPU throttling and Slow-3G-style profiles (chromium, via CDP) |
-| `lighthouse(url, categories)` | Lighthouse scores, through npx |
+| `lighthouse(url, categories)` | Lighthouse scores, through npx (best-effort: needs node) |
 
 Wire it into a client (this JSON shape is what Cursor, Claude Desktop and VS
 Code use; Claude Code also accepts
@@ -451,8 +451,10 @@ every step it reads a ~38k-character accessibility snapshot into its own context
 full turn again on the next step. With jevnav the LLM asks once (`goal`), and
 each step is a ~330ms, $0.00004 question to Jev over a ≤120-candidate shortlist
 that never enters the LLM's context — with a gate in between and a trace written
-as it goes. Measured, same LLM, same tasks: Hacker News Newest 18.0s / 2 calls
-against 23.5s / 4; a Wikipedia search 18.1s / 2 against 83s / 14 (and HTTP 403).
+as it goes. An early one-run sample with the same LLM (deepseek-v4.1-flash via
+opencode) is in the git history; do not lean on it — n=1 per server, and its
+loudest number came from a robot-policy 403, not from architecture. The
+deterministic claim is `replay`, and it needs no benchmark to defend.
 Interactive versions of both sequences: `docs/seq-chrome-devtools.html`,
 `docs/seq-jevnav.html`.
 
