@@ -22,7 +22,8 @@ A coding agent working on a frontend codebase gets two things from jevnav:
   with no model call and no API key.
 
 Selector-based tests break the moment a label changes, and LLM browser agents
-are confident, unauditable and occasionally wrong. jevnav sits in between:
+are confident, unauditable and occasionally wrong. jevnav sits in between
+(the longer version of this argument: [`docs/why.md`](docs/why.md)):
 
 1. **Jev picks the element.** The candidate list of the current page is turned
    into a choice question; the model answers with one element and a calibrated
