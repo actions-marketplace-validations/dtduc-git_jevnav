@@ -45,6 +45,9 @@ mcp = ["mcp>=1.2"]
 [project.scripts]
 jevnav = "jevnav.cli:main"
 
+[project.entry-points.pytest11]
+jevnav = "jevnav.pytest_plugin"
+
 [project.urls]
 Homepage = "https://github.com/dtduc-git/jevnav"
 Issues = "https://github.com/dtduc-git/jevnav/issues"
