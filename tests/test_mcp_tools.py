@@ -416,8 +416,9 @@ def test_fill_form_by_intent_hands_back_a_stable_selector(page, tmp_path):
 def test_max_candidates_limits_what_the_model_sees(page, tmp_path):
     session = make_session(page, tmp_path, max_candidates=2)
     page.set_content("<button>one</button><button>two</button><button>three</button>")
-    session.client = FakeJev({"click one": "one"}).client()
+    fake = FakeJev({"click one": "one"})
+    session.client = fake.client()
     session.browse("click one of them", "click", None)
-    criteria = session.client.calls[0]["questions"]["target"]["criteria"]
+    criteria = fake.calls[0]["questions"]["target"]["criteria"]
     assert len(criteria) == 3  # two candidates + none
     session.close()
