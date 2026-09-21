@@ -356,3 +356,37 @@ def test_dialog_policy_rejects_nonsense(page, tmp_path):
     with pytest.raises(ValueError, match="accept or dismiss"):
         session.dialog_policy("maybe")
     session.close()
+
+
+def test_outline_describes_the_structure(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.goto(fixture_url("loop-app.html"))
+    out = session.outline("main", limit=50)
+    tags = [item["tag"] for item in out["elements"]]
+    assert "h1" in tags and "button" in tags and "input" in tags
+    heading = next(item for item in out["elements"] if item["tag"] == "h1")
+    assert heading["level"] == 1
+    assert "Acme Console" in heading["text"]
+    button = next(item for item in out["elements"] if item["tag"] == "button")
+    assert button["box"][2] > 0
+    session.close()
+
+
+def test_styles_returns_computed_values(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content('<button id=go style="font-size:19px;border-radius:7px">Go</button>')
+    out = session.styles("#go", ["font-size", "border-radius", "display"])
+    element = out["elements"][0]
+    assert element["element"] == "button#go"
+    assert element["styles"]["font-size"] == "19px"
+    assert element["styles"]["border-radius"] == "7px"
+    assert element["styles"]["display"] == "inline-block"
+    session.close()
+
+
+def test_the_default_style_props_cover_the_visual_basics(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<p>hi</p>")
+    styles = session.styles("p")["elements"][0]["styles"]
+    assert {"display", "font-size", "color", "background-color"} <= set(styles)
+    session.close()

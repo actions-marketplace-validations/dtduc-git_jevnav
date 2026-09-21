@@ -119,7 +119,7 @@ If the fingerprint is gone or duplicated, replay refuses to act.
 
 ## Side tools
 
-`console`, `network`, `dialogs`, `read_js`, `wait_for`, `scroll`, the tab tools
+`console`, `network`, `dialogs`, `read_js`, `outline`, `styles`, `wait_for`, `scroll`, the tab tools
 (`tabs`, `new_page`, `select_page`, `close_page`), `screenshot`, `upload_files`,
 `drag`, `resize`, `emulate`, `route`/`unroute`, `trace_start`/`trace_stop`,
 `perf_metrics`, `heap_snapshot` and `lighthouse` are the agent's eyes and hands

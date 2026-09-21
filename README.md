@@ -247,6 +247,8 @@ Tools:
 | `dialogs()` | alert/confirm/prompt, with the policy or rule that resolved them |
 | `dialog_policy(action, match)` | answer future dialogs: the default, or rules by message text |
 | `read_js(expression)` | evaluate JS in the page |
+| `outline(selector, limit)` | a page or region's structure (tags, headings, text, boxes) |
+| `styles(selector, props, limit)` | computed styles of the matching elements |
 | `route(pattern, status, body, abort)` / `unroute(pattern)` | stub or block requests (testing) |
 | `trace_start()` / `trace_stop(path)` | a Playwright trace zip for `playwright show-trace` |
 | `perf_metrics()`, `heap_snapshot(path)` | Chromium counters and a heap snapshot |
@@ -347,6 +349,18 @@ acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
   Replay re-runs actions only with `--execute`, and resolves them by
   fingerprint — never by position — so a shifted page cannot click the wrong
   thing.
+
+## Matching a mockup to the app
+
+The loop for "here is a new UX/UI, update the codebase": the coding agent opens
+the mockup and the running app with jevnav, reads the *facts* instead of
+guessing — `outline("main")` for the structure, `styles("#hero", ["font-size",
+"gap"])` for the computed values, `page_state` for the controls, `screenshot` for
+the human — diffs the two, edits the code itself (that part is the coding agent,
+not jevnav), then re-reads the app to confirm. `goal("...", success="<selector>")`
+pins the result so the fix can be replayed in CI later.
+
+jevnav reports; it does not edit your repository, and it does not compare pixels.
 
 ## Architecture
 
