@@ -167,6 +167,7 @@ def run_flow(
     gates: dict[str, Any],
     writer: TraceWriter,
     model: str,
+    max_candidates: int | None = None,
     dry_run: bool = False,
 ) -> list[dict[str, Any]]:
     """Walk the flow: extract, ask, gate, act, record. Returns the step records."""
@@ -180,7 +181,7 @@ def run_flow(
         settle = int(step.get("settle_ms", default_settle))
         if settle:
             page.wait_for_timeout(settle)
-        candidates, total, dropped = page_module.extract(page)
+        candidates, total, dropped = page_module.extract(page, max_candidates)
         expect = expected_cid(page, step.get("expect"))
         decision = failed_decision(RuntimeError("not attempted"))
         record: dict[str, Any] = {
@@ -226,7 +227,9 @@ def run_flow(
         }
         if gate == AUTO and not dry_run:
             try:
-                page_module.execute(page, chosen, action_runtime(step), settle_ms=settle)
+                page_module.execute(
+                    page, chosen, action_runtime(step), candidates=candidates, settle_ms=settle
+                )
                 record["result"]["executed"] = True
             except Exception as error:
                 record["result"]["error"] = f"{type(error).__name__}: {error}"

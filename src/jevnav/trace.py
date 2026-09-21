@@ -60,6 +60,7 @@ def make_candidate(
     disabled: bool = False,
     in_viewport: bool = True,
     frame: int = 0,
+    dom_index: int = 0,
 ) -> dict[str, Any]:
     return {
         "cid": cid,
@@ -75,6 +76,7 @@ def make_candidate(
         "disabled": disabled,
         "in_viewport": in_viewport,
         "frame": frame,
+        "dom_index": dom_index,
     }
 
 

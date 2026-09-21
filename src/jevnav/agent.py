@@ -186,6 +186,7 @@ def run_goal(
     success: str | None = None,
     max_steps: int = 8,
     min_confidence: float | None = None,
+    max_candidates: int | None = None,
     dry_run: bool = False,
     allow_risky: bool = False,
     settle_ms: int = 300,
@@ -203,7 +204,7 @@ def run_goal(
     for step in range(1, max_steps + 1):
         if settle_ms:
             page.wait_for_timeout(settle_ms)
-        candidates, total, dropped = page_module.extract(page)
+        candidates, total, dropped = page_module.extract(page, max_candidates)
         state = build_state(
             goal=goal,
             context_keys=list(context),
@@ -332,7 +333,9 @@ def run_goal(
             action_dict["key"] = "Enter"
         if not dry_run:
             try:
-                page_module.execute(page, chosen, action_dict, settle_ms=settle_ms)
+                page_module.execute(
+                    page, chosen, action_dict, candidates=candidates, settle_ms=settle_ms
+                )
                 record["result"]["executed"] = True
             except Exception as error:
                 record["result"]["error"] = f"{type(error).__name__}: {error}"

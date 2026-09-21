@@ -86,6 +86,12 @@ def add_browser_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--timezone", help="context timezone, e.g. Asia/Ho_Chi_Minh")
     parser.add_argument("--user-agent", help="override the user agent")
     parser.add_argument(
+        "--max-candidates",
+        type=int,
+        default=None,
+        help="how many elements the model may choose from (default 120, hard cap 254)",
+    )
+    parser.add_argument(
         "--dialog-policy",
         choices=["dismiss", "accept"],
         default="dismiss",
@@ -148,6 +154,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             execute=args.execute,
             settle_ms=args.settle_ms,
             normalize=args.normalize,
+            max_candidates=args.max_candidates,
         )
     report = render_replay_report(result)
     if args.report:
@@ -167,18 +174,18 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def session_options(args: argparse.Namespace) -> tuple:
-    """The `_session` arguments, from the shared browser flags."""
-    return (
-        args.headed,
-        args.user_data_dir,
-        args.cdp,
-        args.dialog_policy,
-        args.browser,
-        args.locale,
-        args.timezone,
-        args.user_agent,
-    )
+def session_options(args: argparse.Namespace) -> dict:
+    """The `_session` keyword arguments, from the shared browser flags."""
+    return {
+        "headed": args.headed,
+        "user_data_dir": args.user_data_dir,
+        "cdp": args.cdp,
+        "dialog_policy": args.dialog_policy,
+        "engine": args.browser,
+        "locale": args.locale,
+        "timezone": args.timezone,
+        "user_agent": args.user_agent,
+    }
 
 
 def parse_context(pairs: list[str]) -> dict[str, str]:
@@ -219,6 +226,7 @@ def cmd_go(args: argparse.Namespace) -> int:
                     success=args.success,
                     max_steps=args.max_steps,
                     min_confidence=args.min_confidence,
+                    max_candidates=args.max_candidates,
                     dry_run=args.dry_run,
                     allow_risky=args.allow_risky,
                     settle_ms=args.settle_ms,
@@ -489,6 +497,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="record every decision to this trace (default jevnav-session.trace.jsonl)",
     )
     mcp.add_argument("--no-trace", action="store_true", help="do not write a trace at all")
+    mcp.add_argument(
+        "--max-candidates",
+        type=int,
+        default=None,
+        help="how many elements the model may choose from (default 120, hard cap 254)",
+    )
     mcp.add_argument(
         "--no-eval",
         action="store_true",

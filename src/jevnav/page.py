@@ -202,7 +202,9 @@ CANDIDATE_JS = r"""
   const kept = all.slice(0, Math.min(LIMIT, 254));
   // clear every stamp first: an element that fell out of the shortlist used to
   // keep its old cid, so a later .first() could match it and act on the wrong node
-  for (const el of document.querySelectorAll('[data-jevcid]')) el.removeAttribute('data-jevcid');
+  for (const el of collect(document, [])) {
+    if (el.hasAttribute && el.hasAttribute('data-jevcid')) el.removeAttribute('data-jevcid');
+  }
   kept.forEach((c, i) => c.el.setAttribute('data-jevcid', PREFIX + ':c' + (i + 1)));
   return {
     total,
@@ -211,6 +213,7 @@ CANDIDATE_JS = r"""
       cid: PREFIX + ':c' + (i + 1), role: c.role, name: c.name, tag: c.tag, type: c.type,
       href: c.href, placeholder: c.placeholder, scope: c.scope, value: c.value,
       disabled: c.disabled, in_viewport: c.in_viewport,
+      dom_index: i,
     })),
   };
 }
@@ -218,11 +221,44 @@ CANDIDATE_JS = r"""
 
 
 DEFAULT_MAX_CANDIDATES = 120
+# The API accepts 255 choices per question and "none" takes one, so the shortlist
+# can never exceed 254 — across *all* frames together, not per frame.
+API_CHOICE_LIMIT = 254
+ROLE_RANK = {
+    "textbox": 0,
+    "searchbox": 0,
+    "combobox": 0,
+    "spinbutton": 0,
+    "checkbox": 0,
+    "radio": 0,
+    "switch": 0,
+    "button": 1,
+    "tab": 1,
+    "menuitem": 1,
+    "menuitemcheckbox": 1,
+    "menuitemradio": 1,
+    "link": 2,
+}
 
 
 def candidate_key(candidate: dict[str, Any]) -> str:
     """The key to look a candidate up by: fingerprint, then which frame it lives in."""
     return f"{candidate.get('frame', 0)}|{candidate['fp']}"
+
+
+def global_order(candidate: dict[str, Any]) -> tuple:
+    """In-viewport first, then form controls before links, then frame and DOM order.
+
+    The per-frame extractor already sorts its own list; this is the same rule
+    applied across frames so the *cap* keeps the most actionable elements of the
+    whole page rather than the whole of the first frame.
+    """
+    return (
+        0 if candidate.get("in_viewport") else 1,
+        ROLE_RANK.get(candidate["role"], 3),
+        candidate.get("frame", 0),
+        candidate.get("dom_index", 0),
+    )
 
 
 def extract(page: Any, limit: int | None = None) -> tuple[list[dict[str, Any]], int, int]:
@@ -232,26 +268,22 @@ def extract(page: Any, limit: int | None = None) -> tuple[list[dict[str, Any]], 
     (payment widgets and design systems live there). Cids are namespaced per
     frame (``f0:c3``, ``f1:c7``) so a cid means one element, on one frame.
 
-    The list is a shortlist, not the page: in-viewport and form controls first,
-    capped at ``limit`` (default 120, the API's hard cap is 254 because ``none``
-    takes one of the 255 choices). ``page --max-candidates`` tunes the trade
-    between decision speed/cost and coverage.
+    The shortlist is capped globally — ``min(limit, 254)`` across all frames,
+    because the API allows 255 choices per question and ``none`` takes one — and
+    ordered by :func:`global_order`. ``dropped`` counts everything the model did
+    not see, so the truncation warning stays honest.
     """
-    per_frame_limit = limit or DEFAULT_MAX_CANDIDATES
-    candidates: list[dict[str, Any]] = []
+    cap = min(limit or DEFAULT_MAX_CANDIDATES, API_CHOICE_LIMIT)
+    collected: list[dict[str, Any]] = []
     total = 0
-    dropped = 0
     for frame_index, frame in enumerate(page.frames):
         try:
-            raw = frame.evaluate(
-                CANDIDATE_JS, {"limit": per_frame_limit, "prefix": f"f{frame_index}"}
-            )
+            raw = frame.evaluate(CANDIDATE_JS, {"limit": cap, "prefix": f"f{frame_index}"})
         except Exception:  # detached, sandboxed or otherwise unreachable frame
             continue
         total += raw["total"]
-        dropped += raw["dropped"]
         for item in raw["candidates"]:
-            candidates.append(
+            collected.append(
                 make_candidate(
                     item["cid"],
                     item["role"],
@@ -265,9 +297,12 @@ def extract(page: Any, limit: int | None = None) -> tuple[list[dict[str, Any]], 
                     disabled=item["disabled"],
                     in_viewport=item["in_viewport"],
                     frame=frame_index,
+                    dom_index=item.get("dom_index", 0),
                 )
             )
-    return candidates, total, dropped
+    collected.sort(key=global_order)
+    kept = collected[:cap]
+    return kept, total, max(0, total - len(kept))
 
 
 def by_cid(candidates: list[dict[str, Any]], cid: str) -> dict[str, Any] | None:
@@ -305,14 +340,24 @@ def frame_of(page: Any, frame_index: int) -> Any:
         return page.main_frame
 
 
-def locator_by_fp(page: Any, fp: str, *, frame_index: int = 0, timeout_ms: int = 10_000) -> Any:
+def locator_by_fp(
+    page: Any,
+    fp: str,
+    *,
+    frame_index: int = 0,
+    candidates: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+    timeout_ms: int = 10_000,
+) -> Any:
     """The single element with this fingerprint in this frame, or a loud failure.
 
     Identity is the fingerprint everywhere else (decisions, traces, replay), so
     acting must use it too: a position-based lookup can silently point at an
-    element that only *used to* be the chosen one.
+    element that only *used to* be the chosen one. Pass the shortlist the
+    decision came from (`candidates`) to skip a second full extraction.
     """
-    candidates, _, _ = extract(page)
+    if candidates is None:
+        candidates, _, _ = extract(page, limit)
     matches = [c for c in candidates if c["fp"] == fp and c.get("frame", 0) == frame_index]
     if len(matches) != 1:
         raise RuntimeError(
@@ -338,19 +383,38 @@ def resolve(page: Any, cid: str, *, timeout_ms: int = 10_000) -> Any:
 
 
 def execute(
-    page: Any, candidate: dict[str, Any], action: dict[str, Any], *, settle_ms: int = 300
+    page: Any,
+    candidate: dict[str, Any],
+    action: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+    settle_ms: int = 300,
 ) -> None:
     """Perform an action on a candidate, resolved by fingerprint, then let the DOM settle."""
     execute_fp(
-        page, candidate["fp"], action, frame_index=candidate.get("frame", 0), settle_ms=settle_ms
+        page,
+        candidate["fp"],
+        action,
+        frame_index=candidate.get("frame", 0),
+        candidates=candidates,
+        limit=limit,
+        settle_ms=settle_ms,
     )
 
 
 def execute_fp(
-    page: Any, fp: str, action: dict[str, Any], *, frame_index: int = 0, settle_ms: int = 300
+    page: Any,
+    fp: str,
+    action: dict[str, Any],
+    *,
+    frame_index: int = 0,
+    candidates: list[dict[str, Any]] | None = None,
+    limit: int | None = None,
+    settle_ms: int = 300,
 ) -> None:
     """Execute an action against the element with this fingerprint, not this position."""
-    element = locator_by_fp(page, fp, frame_index=frame_index)
+    element = locator_by_fp(page, fp, frame_index=frame_index, candidates=candidates, limit=limit)
     kind = action.get("type", "click")
     if kind == "click":
         element.click()

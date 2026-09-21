@@ -264,3 +264,72 @@ def test_the_same_name_in_two_frames_is_not_ambiguous(page, tmp_path):
     saves = [c for c in candidates if c["name"] == "Save"]
     assert len(saves) == 2 and saves[0]["frame"] != saves[1]["frame"]
     page_module.execute(page, saves[1], {"type": "click"}, settle_ms=0)  # the one inside the iframe
+
+
+def test_the_cap_is_global_across_frames(page):
+    """3 frames x 100 buttons with limit 120 must not hand the API 301 options."""
+    from jevnav.decide import build_question
+    from jevnav.page import API_CHOICE_LIMIT
+
+    page.set_content(
+        "".join(
+            "<iframe srcdoc='"
+            + "".join(f"<button>B{i}</button>" for i in range(100))
+            + "'></iframe>"
+            for _ in range(3)
+        )
+    )
+    page.wait_for_timeout(300)
+    for limit in (120, 254):
+        candidates, total, dropped = extract(page, limit=limit)
+        assert len(candidates) == min(limit, API_CHOICE_LIMIT)
+        assert dropped == total - len(candidates) > 0
+        options = build_question("u", "t", "an intent", candidates)["criteria"]
+        assert len(options) <= 255  # 254 candidates + none
+
+
+def test_the_global_shortlist_prefers_what_is_on_screen_in_any_frame(page):
+    page.set_content(
+        "<a href='#docs'>Go to docs</a>"
+        "<div style='height:2000px'></div>"
+        "<iframe srcdoc='<button>Pay now</button>' style='position:fixed;top:0;left:0'></iframe>"
+    )
+    page.wait_for_timeout(300)
+    page.evaluate("window.scrollTo(0, 1800)")
+    candidates, _, _ = extract(page)
+    first = candidates[0]
+    assert first["name"] == "Pay now"  # in viewport, inside frame 1, ranked above the link
+
+
+def test_stamps_stay_unique_inside_shadow_roots(page):
+    """The clear loop must walk shadow roots the same way the collector does."""
+    script = (
+        "<script>class X extends HTMLElement{connectedCallback(){"
+        "const r=this.attachShadow({mode:'open'});"
+        "r.innerHTML='<button>Shadow A</button><button>Shadow B</button>';}}"
+        "customElements.define('w-x',X);</script>"
+    )
+    page.set_content(
+        "".join(f"<button>noise {i}</button>" for i in range(130)) + "<w-x></w-x>" + script
+    )
+    page.wait_for_timeout(200)
+    first, _, _ = extract(page, limit=5)  # the shadow buttons fall out of the shortlist
+    second, _, _ = extract(page, limit=5)
+    for candidate in second:
+        assert page.locator(f'[data-jevcid="{candidate["cid"]}"]').count() == 1
+    assert first  # the first shortlist is the one that left the stale stamps
+
+
+def test_execute_can_reuse_the_shortlist_it_was_decided_from(page, app_url, monkeypatch):
+    """No second full extraction per step: pass the candidates along."""
+    from jevnav import page as page_module
+
+    page.goto(app_url)
+    candidates, _, _ = extract(page)
+    sign_in = by_name(candidates, "Sign in")
+
+    def explode(*args, **kwargs):
+        raise AssertionError("extract must not be called again")
+
+    monkeypatch.setattr(page_module, "extract", explode)
+    page_module.execute(page, sign_in, {"type": "click"}, candidates=candidates, settle_ms=0)

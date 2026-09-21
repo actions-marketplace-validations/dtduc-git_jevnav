@@ -73,10 +73,13 @@ control inside a payment iframe or a web component is a candidate like any
 other. Cids are frame-namespaced (`f1:c7`), the stamps in the DOM carry the same
 name, and acting resolves by fingerprint **within that frame**.
 
-The list is capped at `--max-candidates` (default 120; the API's
-hard cap is 254 because `none` takes one of 255 choices) and `dropped` records
-how many were left out (truncation is a warning by default, `truncated: review`
-to gate on it).
+The list is capped **globally, across every frame together**:
+`min(--max-candidates, 254)`, because the API allows 255 choices per question and
+`none` takes one. Ordering is in-viewport first, then form controls, then links,
+then frame index, then DOM order — so the cap keeps the most actionable elements
+of the whole page, not everything from the first frame. `dropped` counts
+everything the model did not see, across frames (truncation is a warning by
+default, `truncated: review` to gate on it).
 
 Measured 2026-09-21 on Hacker News (199 candidates): the same decisions at 40
 candidates cost 1815 input tokens and ~300ms instead of 6973 tokens and ~350ms

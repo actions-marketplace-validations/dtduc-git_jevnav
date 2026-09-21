@@ -46,6 +46,7 @@ def replay_step(
     url: str | None = None,
     force_navigate: bool = False,
     normalize: list[str] | None = None,
+    max_candidates: int | None = None,
 ) -> dict[str, Any]:
     """Re-resolve one recorded decision against the page as it is now."""
     target = url or step["url"]
@@ -70,7 +71,7 @@ def replay_step(
             page.goto(target, wait_until="domcontentloaded")
             page.wait_for_timeout(300 if not target.startswith("file:") else 0)
             result["navigated"] = True
-        current, _, _ = page_module.extract(page)
+        current, _, _ = page_module.extract(page, max_candidates)
     except Exception as error:
         result["verdict"] = ERROR
         result["reason"] = f"{type(error).__name__}: {error}"
@@ -124,6 +125,7 @@ def replay_trace(
     execute: bool = False,
     settle_ms: int = 300,
     normalize: list[str] | None = None,
+    max_candidates: int | None = None,
 ) -> dict[str, Any]:
     """Replay every step of a trace. ``swap`` points all steps at one local file."""
     run, steps = read_trace(trace_path)
@@ -144,6 +146,7 @@ def replay_trace(
                         result["chosen_fp"],
                         action,
                         frame_index=result.get("chosen_frame", 0),
+                        limit=max_candidates,
                         settle_ms=settle_ms,
                     )
                 result["executed"] = True

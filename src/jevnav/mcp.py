@@ -183,12 +183,14 @@ class Session:
         timezone: str | None = None,
         user_agent: str | None = None,
         allow_eval: bool = True,
+        max_candidates: int | None = None,
     ) -> None:
         from .cli import _client
 
         self.gates = load_gates(gates)
         self.model = model
         self.allow_eval = allow_eval
+        self.max_candidates = max_candidates
         self.client = client or _client()
         self.browser: BrowserThread | None = None
         self.page = page
@@ -361,7 +363,7 @@ class Session:
             if selector:
                 locator = page.locator(selector).first
             else:
-                candidates, _, _ = page_module.extract(page)
+                candidates, _, _ = page_module.extract(page, self.max_candidates)
                 files = [c for c in candidates if (c.get("type") or "").lower() == "file"]
                 if not files:
                     raise RuntimeError("no file input on the page")
@@ -722,7 +724,7 @@ class Session:
                 "status": "error",
                 "error": f"unknown action {action!r} (expected one of {sorted(ACTION_TYPES)})",
             }
-        candidates, total, dropped = page_module.extract(page)
+        candidates, total, dropped = page_module.extract(page, self.max_candidates)
         step = {
             "step": len(self.steps) + 1,
             "intent": intent,
@@ -796,6 +798,7 @@ class Session:
                     action_runtime(
                         {"action": action, **({"value": value} if value is not None else {})}
                     ),
+                    candidates=candidates,
                 )
                 step["result"]["executed"] = True
                 out |= {"url": page.url, "title": page.title()}
@@ -828,6 +831,7 @@ class Session:
                 context=context or {},
                 max_steps=max_steps,
                 success=success,
+                max_candidates=self.max_candidates,
             )
         )
         self.steps.extend(result["steps"])
@@ -843,7 +847,7 @@ class Session:
         return self.on_page(self._page_state)
 
     def _page_state(self, page: Any) -> dict[str, Any]:
-        candidates, total, dropped = page_module.extract(page)
+        candidates, total, dropped = page_module.extract(page, self.max_candidates)
         return {
             "url": page.url,
             "title": page.title(),
@@ -893,6 +897,7 @@ def serve(
     timezone: str | None = None,
     user_agent: str | None = None,
     allow_eval: bool = True,
+    max_candidates: int | None = None,
 ) -> int:
     try:
         server_class()
@@ -914,6 +919,7 @@ def serve(
         timezone=timezone,
         user_agent=user_agent,
         allow_eval=allow_eval,
+        max_candidates=max_candidates,
     )
     mcp = server_class()("jevnav")
 
