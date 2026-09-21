@@ -7,6 +7,8 @@
 [![CI](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml/badge.svg)](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/jevnav.svg)](https://pypi.org/project/jevnav/)
 [![Python](https://img.shields.io/pypi/pyversions/jevnav.svg)](https://pypi.org/project/jevnav/)
+[![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.dtduc--git%2Fjevnav-6E56CF)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.dtduc-git/jevnav)
+[![Marketplace](https://img.shields.io/badge/Marketplace-jevnav%20replay-2EA44F?logo=github)](https://github.com/marketplace/actions/jevnav-replay)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Selector-based tests break the moment a label changes, and LLM browser agents
@@ -30,6 +32,11 @@ are confident, unauditable and occasionally wrong. jevnav sits in between:
 uv tool install jevnav          # or: pip install jevnav (the MCP server is included)
 playwright install chromium     # one-time browser download
 ```
+
+Published on [PyPI](https://pypi.org/project/jevnav/), listed in the
+[MCP registry](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.dtduc-git/jevnav)
+as `io.github.dtduc-git/jevnav`, and the replay Action is on the
+[GitHub Marketplace](https://github.com/marketplace/actions/jevnav-replay).
 
 `jevnav run` needs a TypeSafe API key (`TYPESAFE_API_KEY`, or
 `~/.config/typesafe/apikey.txt`). `jevnav replay` needs none — that is the point.
@@ -259,14 +266,14 @@ Tools:
 
 Wire it into a client (this JSON shape is what Cursor, Claude Desktop and VS
 Code use; Claude Code also accepts
-`claude mcp add jevnav -- uvx --from "jevnav[mcp]" jevnav mcp --start <url>`):
+`claude mcp add --scope user jevnav -- uvx jevnav mcp`):
 
 ```json
 {
   "mcpServers": {
     "jevnav": {
       "command": "uvx",
-      "args": ["--from", "jevnav[mcp]", "jevnav", "mcp"],
+      "args": ["jevnav", "mcp"],
       "env": { "TYPESAFE_API_KEY": "..." }
     }
   }
@@ -328,6 +335,24 @@ role/value validation and the outcome check are not overridable.
 The stdio path is tested end-to-end in CI: a real MCP client connects to a
 `jevnav mcp` subprocess, lists the tools, calls `goal` and checks the browser
 acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
+
+## CI — the Action
+
+The Action replays a recorded trace and fails when a site change breaks a
+recorded decision. No model call, no API key, ~30 seconds:
+
+```yaml
+- uses: dtduc-git/jevnav@v0
+  with:
+    trace: examples/local-demo/demo.trace.jsonl
+    execute: "true"          # also re-run the recorded actions
+    report: replay.md
+```
+
+Inputs: `trace`, `report`, `execute`, `json`, `version` (default `latest` from
+PyPI, or `local` to run a checkout). Exit code 1 when a target changed, became
+ambiguous, or a recorded `--success` selector is no longer visible. `@v0` is a
+floating tag; pin `@v0.1.1` if you prefer.
 
 ## How it works
 
