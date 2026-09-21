@@ -12,7 +12,9 @@ from jevnav.trace import TraceWriter, read_trace
 
 @pytest.fixture
 def navigator(page, tmp_path):
-    fake = FakeJev({"sign in": "sign in", "email": "email", "delete": "delete renew"})
+    fake = FakeJev(
+        {"sign in": "sign in", "email": "email", "password": "Password", "delete": "delete renew"}
+    )
     writer = TraceWriter(tmp_path / "test_login.trace.jsonl", flow="pytest:test_login")
     instance = JevNavigator(page, fake.client(), writer, gates=default_gates())
     yield instance, writer
@@ -46,6 +48,51 @@ def test_a_risky_intent_fails_the_test_before_it_acts(navigator, app_url):
     assert steps[0]["gate"]["verdict"] == "review"
     assert steps[0]["result"]["executed"] is False
     assert "Renew TLS" in jev.page.content()  # nothing was clicked
+
+
+def test_an_env_value_is_traced_by_name_only_and_replays(navigator, app_url, page, monkeypatch):
+    from jevnav.replay import replay_trace
+
+    monkeypatch.setenv("DEMO_PASSWORD", "hunter2-super-secret")
+    jev, writer = navigator
+    jev.goto(app_url)
+    jev.fill("the password field", "${DEMO_PASSWORD}")
+    assert jev.page.locator("#login-password").input_value() == "hunter2-super-secret"
+    writer.close()
+    assert "hunter2-super-secret" not in writer.path.read_text()
+    _, steps = read_trace(writer.path)
+    assert steps[0]["action"] == {"type": "fill", "value_from_env": "DEMO_PASSWORD"}
+    result = replay_trace(writer.path, page=page, execute=True)
+    assert result["failed"] == []
+
+
+def test_clearing_a_field_is_recorded_and_replays(navigator, app_url, page):
+    from jevnav.replay import replay_trace
+
+    jev, writer = navigator
+    jev.goto(app_url)
+    jev.fill("the email address", "demo@example.com")
+    jev.fill("the email address", "")
+    assert jev.page.locator("#login-email").input_value() == ""
+    writer.close()
+    _, steps = read_trace(writer.path)
+    assert steps[1]["action"] == {"type": "fill", "value": ""}
+    result = replay_trace(writer.path, page=page, execute=True)
+    assert result["failed"] == []
+    assert page.locator("#login-email").input_value() == ""
+
+
+def test_a_press_records_its_key_and_replays(navigator, app_url, page):
+    from jevnav.replay import replay_trace
+
+    jev, writer = navigator
+    jev.goto(app_url)
+    jev.press("the email address", "Enter")
+    writer.close()
+    _, steps = read_trace(writer.path)
+    assert steps[0]["action"] == {"type": "press", "key": "Enter"}
+    result = replay_trace(writer.path, page=page, execute=True)
+    assert result["failed"] == []
 
 
 def test_expect_fails_on_the_page_not_on_the_model(navigator, app_url):

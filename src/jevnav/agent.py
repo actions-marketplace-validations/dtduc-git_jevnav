@@ -51,7 +51,7 @@ def context_value(raw: str) -> tuple[str | None, str | None]:
     if match:
         name = match.group(1)
         if name not in os.environ:
-            raise KeyError(f"environment variable {name} is not set (needed by the goal context)")
+            raise KeyError(f"environment variable {name} is not set (needed by a recorded value)")
         return os.environ[name], name
     return str(raw), None
 

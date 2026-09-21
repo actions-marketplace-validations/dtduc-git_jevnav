@@ -3,7 +3,7 @@
     def test_login(jev):
         jev.goto("https://app.example.com/login")
         jev.fill("the email field on the login form", "demo@example.com")
-        jev.fill("the password field", "hunter2")
+        jev.fill("the password field", "${DEMO_PASSWORD}")
         jev.click("sign in to the existing account")
         jev.expect("#dashboard")
 
@@ -11,9 +11,11 @@ Every action is a Jev decision, gated the same way `jevnav go` gates its own,
 and the whole test writes one trace — commit it and `jevnav replay --execute`
 re-runs the test in CI without a model call:
 
-    pytest --jev-trace-dir=traces
+    DEMO_PASSWORD=... pytest --jev-trace-dir=traces
 
-Trace files are named after the test (`traces/test_login.trace.jsonl`).
+A ``${VAR}`` value is read from the environment and the trace records only the
+variable name, so a secret never reaches the committed file. Trace files are
+named after the test (`traces/test_login.trace.jsonl`).
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from typing import Any
 
 import pytest
 
+from .agent import context_value
+from .browser import browser_session
 from .gates import AUTO, load_gates, verdict
 from .page import by_cid, execute, extract, locator_for
 from .trace import TraceWriter
@@ -126,10 +130,24 @@ class JevNavigator:
         gate, reason = verdict(
             decision, intent=intent, candidate=chosen, dropped=dropped, gates=self.gates
         )
+        payload: dict[str, Any] = {"type": action}
+        if value is not None:
+            value, env_name = context_value(value)
+            payload["value"] = value
+            action_record: dict[str, Any] = (
+                {"type": action, "value_from_env": env_name}
+                if env_name
+                else {"type": action, "value": value}
+            )
+        else:
+            action_record = {"type": action}
+        if key is not None:
+            payload["key"] = key
+            action_record["key"] = key
         record: dict[str, Any] = {
             "step": self.step,
             "intent": intent,
-            "action": {"type": action, **({"value": value} if value else {})},
+            "action": action_record,
             "url": self.page.url,
             "title": self.page.title(),
             "total_on_page": total,
@@ -151,11 +169,6 @@ class JevNavigator:
                 f"gate verdict {gate!r} for {intent!r}: {record['gate']['reason']}\n"
                 f"(the decision is in {self.writer.path})"
             )
-        payload: dict[str, Any] = {"type": action}
-        if value is not None:
-            payload["value"] = value
-        if key is not None:
-            payload["key"] = key
         try:
             execute(self.page, chosen, payload)
             record["result"]["executed"] = True
@@ -178,16 +191,14 @@ def jev(request: Any):
     headed = bool(request.config.getoption("--jev-headed"))
     gates = load_gates(request.config.getoption("--jev-gates"))
 
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=not headed)
-        page = browser.new_page(viewport={"width": 1280, "height": 900})
-        with TraceWriter(trace_path, flow=f"pytest:{name}", model="jev-latest") as writer:
-            navigator = JevNavigator(page, client, writer, gates=gates)
-            yield navigator
-        browser.close()
-    client.close()
+    try:
+        with (
+            browser_session(headed=headed) as page,
+            TraceWriter(trace_path, flow=f"pytest:{name}", model="jev-latest") as writer,
+        ):
+            yield JevNavigator(page, client, writer, gates=gates)
+    finally:
+        client.close()
 
 
 def _client() -> Any:
