@@ -109,7 +109,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or f"{flow['id']}.trace.jsonl")
     client = _client()
     try:
-        with _session(*session_options(args)) as page:
+        with _session(**session_options(args)) as page:
             with TraceWriter(
                 trace_path,
                 flow=flow["id"],
@@ -146,7 +146,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    with _session(*session_options(args)) as page:
+    with _session(**session_options(args)) as page:
         result = replay_trace(
             args.trace,
             page=page,
@@ -203,7 +203,7 @@ def cmd_go(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or "goal.trace.jsonl")
     client = _client()
     try:
-        with _session(*session_options(args)) as page:
+        with _session(**session_options(args)) as page:
             with TraceWriter(
                 trace_path,
                 flow="goal",
@@ -256,7 +256,7 @@ def cmd_play(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or "play.trace.jsonl")
     client = _client()
     try:
-        with _session(*session_options(args)) as page:
+        with _session(**session_options(args)) as page:
             if args.url:
                 page.goto(resolve_url(args.url, Path.cwd()), wait_until="domcontentloaded")
             if args.ready_js:
@@ -309,7 +309,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
 
     url_a = resolve_url(args.a, Path.cwd())
     url_b = resolve_url(args.b, Path.cwd())
-    with _session(*session_options(args)) as page:
+    with _session(**session_options(args)) as page:
         result = compare_pages(
             url_a,
             url_b,

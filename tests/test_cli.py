@@ -233,3 +233,26 @@ def test_mcp_traces_by_default_and_can_opt_out(monkeypatch, tmp_path):
     assert cli_module.main(["mcp", "--no-trace", "--start", "https://x.test"]) == 0
     assert captured["trace"] is None
     assert captured["start"] == "https://x.test"
+
+
+def test_session_options_bind_to_the_real_session(tmp_path):
+    """The CLI tests patch _session, so nothing else checks this wiring."""
+    import inspect
+
+    from jevnav import cli
+
+    argv = ["replay", str(tmp_path / "t.jsonl")]
+    args = cli.build_parser().parse_args(argv)
+    options = cli.session_options(args)
+    assert isinstance(options, dict)
+    # fails loudly on a typo or a missing option, without launching a browser
+    inspect.signature(cli._session).bind(**options)
+    for command in ("run", "go", "play", "diff"):
+        extra = {
+            "run": [str(tmp_path / "flow.yaml")],
+            "go": ["--goal", "x"],
+            "play": ["--goal", "x", "--state", "1", "--actions", "a=ArrowLeft"],
+            "diff": [str(tmp_path / "a.html"), str(tmp_path / "b.html")],
+        }[command]
+        parsed = cli.build_parser().parse_args([command, *extra])
+        inspect.signature(cli._session).bind(**cli.session_options(parsed))
