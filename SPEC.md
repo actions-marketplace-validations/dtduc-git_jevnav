@@ -206,6 +206,23 @@ Loop rules, all deterministic:
 `replay --execute` re-runs a loop trace and re-checks the recorded `success`
 selector, so an agent run becomes a deterministic CI test.
 
+## Diff (`jevnav diff a b`)
+
+Comparison only — no model, no repository writes. Both pages are opened in one
+browser session and snapshotted with the same extractors as the `outline` and
+`styles` tools.
+
+- Structure is matched by `tag|label`, where the label is the element's own
+  text, falling back to its aggregated text only when it has no descendants we
+  would report separately (so a container is not "changed" when a child goes
+  away). Differences are `missing`, `new` or `moved` (box delta beyond
+  `--tolerance`, default 4px).
+- Styles are compared element-by-element for `--style-selector`, property by
+  property; every `px` number is rounded, so fractional layout noise does not
+  read as a change.
+- Exit code 0 when identical, 1 when anything differs — usable as "the app must
+  still match the design" in CI.
+
 ## Play mode (`jevnav play`)
 
 The Doom shape: the caller supplies a JS state probe and an action set; there is

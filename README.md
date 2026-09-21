@@ -76,6 +76,7 @@ steps:
 ```bash
 jevnav run flows/acme-login/flow.yaml --report run.md
 jevnav replay acme-login.trace.jsonl --report replay.md   # offline, deterministic
+jevnav diff new-ui.html http://localhost:3000             # mockup vs app, exit 1 on drift
 ```
 
 `run` walks the flow: extract candidates → ask Jev → gate → act → record.
@@ -351,6 +352,38 @@ acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
   thing.
 
 ## Matching a mockup to the app
+
+```bash
+jevnav diff new-ui.html http://localhost:3000 --report ui-diff.md
+```
+
+```
+- mockup: `new-ui.html` — 'Pricing (new UX)', 7 elements
+- app:    `http://localhost:3000` — 'Pricing', 4 elements
+- differences: **5** structure, **4** style
+
+## Structure (`body`)
+| kind | element | detail |
+|---|---|---|
+| missing | p 'Three plans for every team.' | not on the other page |
+| missing | section 'Enterprise Talk to sales' | not on the other page |
+| missing | button 'Talk to sales' | not on the other page |
+| new | button#extra 'Book a demo' | only on the other page |
+| moved | h1 'Pricing' | x+0 y+0 w+0 h-5px |
+
+## Styles (`h1,#cta`)
+| element | property | mockup | app |
+|---|---|---|---|
+| h1 [Pricing] | font-size | 32px | 28px |
+| button#cta [Start free] | border-radius | 8px | 4px |
+```
+
+Exit code 1 when anything differs, 0 when the pages match — so the same command
+works as a CI check that the app has not drifted from the design. Structure is
+matched by tag + the element's own text (self-closing containers are not
+"changed" when a child disappears), boxes are compared with a 4px tolerance
+(`--tolerance`), and fractional pixel values are rounded so layout noise does
+not read as a change.
 
 The loop for "here is a new UX/UI, update the codebase": the coding agent opens
 the mockup and the running app with jevnav, reads the *facts* instead of

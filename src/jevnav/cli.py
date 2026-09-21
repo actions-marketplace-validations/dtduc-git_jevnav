@@ -10,6 +10,8 @@ from pathlib import Path
 
 from . import __version__
 from .agent import run_goal, summarize_goal
+from .diffpage import compare as compare_pages
+from .diffpage import render as render_diff
 from .flow import FlowError, load_flow, recorded_url, resolve_url, run_flow, summarize_run
 from .gates import load_gates
 from .play import parse_actions, play
@@ -292,6 +294,32 @@ def cmd_play(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Compare two pages — the mockup and the app — and report what differs."""
+    from .flow import resolve_url
+
+    url_a = resolve_url(args.a, Path.cwd())
+    url_b = resolve_url(args.b, Path.cwd())
+    with _session(*session_options(args)) as page:
+        result = compare_pages(
+            url_a,
+            url_b,
+            page=page,
+            selector=args.selector,
+            style_selector=args.style_selector,
+            limit=args.limit,
+            tolerance=args.tolerance,
+        )
+    report = render_diff(result)
+    if args.report:
+        Path(args.report).write_text(report)
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(report, end="")
+    return EXIT_OK if result["identical"] else EXIT_FAILED
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp import serve
 
@@ -374,6 +402,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     go.add_argument("--json", action="store_true")
     go.set_defaults(func=cmd_go)
+
+    diff = sub.add_parser(
+        "diff",
+        help="compare a mockup with the app: structure + computed styles, no model call",
+    )
+    diff.add_argument("a", help="the mockup (URL or local file)")
+    diff.add_argument("b", help="the app (URL or local file)")
+    diff.add_argument("--selector", default="body", help="region to compare structurally")
+    diff.add_argument(
+        "--style-selector",
+        default="h1,h2,h3,button,a,input,main,header,footer",
+        help="elements whose computed styles are compared",
+    )
+    diff.add_argument("--limit", type=int, default=200, help="max elements in the structure pass")
+    diff.add_argument(
+        "--tolerance", type=int, default=4, help="ignore box changes up to this many px"
+    )
+    diff.add_argument("--report", help="write the markdown report here")
+    diff.add_argument("--json", action="store_true")
+    add_browser_flags(diff)
+    diff.set_defaults(func=cmd_diff)
 
     play = sub.add_parser(
         "play",

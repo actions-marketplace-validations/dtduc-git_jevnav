@@ -45,6 +45,9 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
   lever with a measured trade: same accuracy on the HN task at 40 vs 199
   candidates, 2.8x faster cold and 3.8x fewer tokens. If you change the ordering
   or the default cap, re-measure on a real page and write the number down.
+- `diff` reports; it never decides. Keep it that way: no model calls, no edits to
+  a repository, no pixel comparison. If a difference needs a judgement call, that
+  belongs to the caller.
 - Dialogs cannot be parked for a human: Playwright's sync API must answer inside
   the handler, and a parked dialog blocks the renderer (measured: the next call
   never returned). They are answered by `dialog_policy` rules set in advance and

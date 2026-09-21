@@ -298,3 +298,101 @@ def execute_fp(page: Any, fp: str, action: dict[str, Any], *, settle_ms: int = 3
     if len(matches) != 1:
         raise RuntimeError(f"cannot execute: {len(matches)} candidates match {fp!r}")
     execute(page, matches[0]["cid"], action, settle_ms=settle_ms)
+
+
+OUTLINE_JS = r"""(args) => {
+  const root = document.querySelector(args.selector) || document.body;
+  const SEL = 'h1,h2,h3,h4,h5,h6,main,header,footer,nav,section,article,'
+    + 'form,label,button,a,p,li,img,input,select,textarea';
+  const out = [];
+  for (const el of root.querySelectorAll(SEL)) {
+    if (out.length >= args.limit) break;
+    const rect = el.getBoundingClientRect();
+    const tag = el.tagName.toLowerCase();
+    const raw = el.innerText || el.textContent || '';
+    const text = raw.replace(/\s+/g, ' ').trim().slice(0, 80);
+    // text of this element only, so a container is not "changed" when a child is
+    const ownText = [...el.childNodes]
+      .filter((node) => node.nodeType === 3)
+      .map((node) => node.textContent)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+    const name = el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
+                 el.getAttribute('alt') || el.getAttribute('name') || null;
+    out.push({
+      tag,
+      level: /^h[1-6]$/.test(tag) ? Number(tag[1]) : null,
+      text: text || null,
+      ownText: ownText || null,
+      leaf: !el.querySelector(SEL),
+      name,
+      id: el.id || null,
+      classes: (el.className || '').toString().split(/\s+/).filter(Boolean).slice(0, 4),
+      box: [Math.round(rect.x), Math.round(rect.y),
+            Math.round(rect.width), Math.round(rect.height)],
+    });
+  }
+  return {selector: args.selector, count: out.length, elements: out};
+}"""
+
+STYLES_JS = r"""(args) => {
+  const nodes = [...document.querySelectorAll(args.selector)].slice(0, args.limit);
+  const props = args.props;
+  return nodes.map((el) => {
+    const style = getComputedStyle(el);
+    const styles = {};
+    for (const prop of props) {
+      let value = style.getPropertyValue(prop).trim();
+      // round every px number so fractional layout noise is not read as a change
+      value = value.replace(/(-?\d+\.\d+)px/g, (_m, number) => Math.round(Number(number)) + 'px');
+      styles[prop] = value;
+    }
+    const rect = el.getBoundingClientRect();
+    return {
+      element: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
+      text: (el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60) || null,
+      box: [Math.round(rect.width), Math.round(rect.height)],
+      styles,
+    };
+  });
+}"""
+
+DEFAULT_STYLE_PROPS = [
+    "display",
+    "position",
+    "width",
+    "height",
+    "color",
+    "background-color",
+    "font-size",
+    "font-weight",
+    "font-family",
+    "line-height",
+    "padding",
+    "margin",
+    "border-radius",
+    "gap",
+    "flex-direction",
+    "align-items",
+    "justify-content",
+    "grid-template-columns",
+]
+
+
+def outline(page: Any, selector: str = "body", limit: int = 200) -> dict[str, Any]:
+    """Structural summary of a region: tags, headings, text, accessible names, boxes."""
+    return page.evaluate(OUTLINE_JS, {"selector": selector, "limit": limit})
+
+
+def styles(
+    page: Any, selector: str, props: list[str] | None = None, limit: int = 10
+) -> dict[str, Any]:
+    """Computed styles of the matching elements, as the browser resolved them."""
+    return {
+        "selector": selector,
+        "elements": page.evaluate(
+            STYLES_JS, {"selector": selector, "props": props or DEFAULT_STYLE_PROPS, "limit": limit}
+        ),
+    }
