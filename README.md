@@ -201,13 +201,41 @@ jevnav mcp --start https://app.example.com --trace session.trace.jsonl
 
 Tools:
 
+**Deciding** — the part no other browser MCP has:
+
 | tool | what it does |
 |---|---|
-| `goto(url)` | open a page in jevnav's browser |
-| `browse(intent, action, value)` | one step: Jev picks the element, the gate decides, and only `auto` acts |
-| `goal(goal, context_json, max_steps, success)` | drive the whole way: "sign in and open billing" — `success` is a selector the outcome is verified against; returns `done` / `stuck` / `review` plus the verification |
-| `page_state()` | URL, title and the interactive elements jevnav can see |
+| `browse(intent, action, value, min_confidence)` | one step: Jev picks the element, the gate decides, and only `auto` acts |
+| `goal(goal, context_json, max_steps, success)` | drive the whole way: "sign in and open billing" — `success` verifies the outcome; returns `done` / `stuck` / `review` plus the verification |
+| `goto(url)` | open a page |
+| `page_state()` | URL, title and the shortlist jevnav can see |
 | `summary()` | this session: steps, auto/review/blocked, cost, latency |
+
+**Acting** — everything else an agent needs:
+
+| tool | what it does |
+|---|---|
+| `screenshot(path, full_page, selector)` | save a PNG for a human (never used by a decision) |
+| `upload_files(paths, selector, intent)` | set files, on a selector or an input Jev picks |
+| `drag(source_selector, target_selector)` | drag one element onto another |
+| `resize(width, height)` | change the viewport |
+| `emulate(color_scheme, media, geolocation, offline, …)` | emulate media, location and connectivity |
+| `wait_for(text, selector, timeout_ms)` | wait for something to appear |
+| `scroll(direction, amount)` | scroll the document |
+| `tabs()`, `new_page(url)`, `select_page(i)`, `close_page(i)` | work with tabs |
+
+**Inspecting** — the agent's eyes (observation only, never traced):
+
+| tool | what it does |
+|---|---|
+| `console(limit, only_errors)` | recent console messages and page errors |
+| `network(limit, only_failed)` | recent requests, with statuses |
+| `dialogs()` | alert/confirm/prompt, with the policy that resolved them |
+| `read_js(expression)` | evaluate JS in the page |
+| `route(pattern, status, body, abort)` / `unroute(pattern)` | stub or block requests (testing) |
+| `trace_start()` / `trace_stop(path)` | a Playwright trace zip for `playwright show-trace` |
+| `perf_metrics()`, `heap_snapshot(path)` | Chromium counters and a heap snapshot |
+| `lighthouse(url, categories)` | Lighthouse scores, through npx |
 
 Wire it into a client (this JSON shape is what Cursor, Claude Desktop and VS
 Code use; Claude Code also accepts
@@ -231,6 +259,24 @@ Why an agent would: it does not need its own Playwright MCP, it cannot click a
 `Delete` by accident (`review` never executes), and its whole session is a
 trace that `jevnav replay --execute` can re-run in CI. Cost is about
 **$0.00004 and 330ms per step**; `page_state` and `goto` are free.
+
+### How it differs from the others
+
+| | Playwright (library) | chrome-devtools-mcp | jevnav |
+|---|---|---|---|
+| who picks the element | a human writes selectors | the LLM, from a snapshot | **Jev**, with a calibrated probability |
+| scope | the full test-authoring API | 29 tools, primitives + profiling | 27 tools, intent-level acting + observation |
+| risky actions | whatever the test says | whatever the LLM says | **never executed** until a human says so |
+| regression evidence | trace viewer, re-run the test | none | **decision trace + offline replay that exits 1** |
+| outcome assertion | `expect(...)` | none | `--success` selector, verified or reported unverified |
+| engines | chromium, firefox, webkit | chromium | chromium, firefox, webkit (`--browser`) |
+| per-step cost | 0 | one LLM turn per step (~38k chars of snapshot) | **$0.00004** |
+
+jevnav is not a replacement for either: it is the acting + evidence layer an
+agent calls by intent. Playwright is the library you write test suites with
+(jevnav is built on it), chrome-devtools is what you reach for to debug a page.
+What jevnav adds is the part both lack: a decision that can be reviewed before
+it runs, and a run that can be replayed after the site changes.
 
 ### When the gate says `review`
 

@@ -157,7 +157,7 @@ def test_the_cli_plays_and_reports(tmp_path, capsys, monkeypatch, page):
     monkeypatch.setattr(cli, "_api_key", lambda: "test-key")
 
     @contextmanager
-    def session(headed=False, user_data_dir=None, cdp=None, dialog_policy="dismiss"):
+    def session(*args, **kwargs):
         yield page
 
     monkeypatch.setattr(cli, "_session", session)

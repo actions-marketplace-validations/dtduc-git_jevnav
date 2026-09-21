@@ -43,6 +43,10 @@ def _session(
     user_data_dir: str | None = None,
     cdp: str | None = None,
     dialog_policy: str = "dismiss",
+    engine: str = "chromium",
+    locale: str | None = None,
+    timezone: str | None = None,
+    user_agent: str | None = None,
 ):
     from .browser import browser_session
 
@@ -51,6 +55,10 @@ def _session(
         user_data_dir=user_data_dir,
         cdp=cdp,
         dialog_policy=dialog_policy,
+        engine=engine,
+        locale=locale,
+        timezone=timezone,
+        user_agent=user_agent,
     ) as page:
         yield page
 
@@ -66,6 +74,15 @@ def add_browser_flags(parser: argparse.ArgumentParser) -> None:
         help="attach to a running Chrome over CDP, e.g. http://127.0.0.1:9222 "
         "(start Chrome with --remote-debugging-port=9222)",
     )
+    parser.add_argument(
+        "--browser",
+        choices=["chromium", "firefox", "webkit"],
+        default="chromium",
+        help="which engine to drive (firefox/webkit need `playwright install firefox webkit`)",
+    )
+    parser.add_argument("--locale", help="context locale, e.g. en-US or vi-VN")
+    parser.add_argument("--timezone", help="context timezone, e.g. Asia/Ho_Chi_Minh")
+    parser.add_argument("--user-agent", help="override the user agent")
     parser.add_argument(
         "--dialog-policy",
         choices=["dismiss", "accept"],
@@ -84,7 +101,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or f"{flow['id']}.trace.jsonl")
     client = _client()
     try:
-        with _session(args.headed, args.user_data_dir, args.cdp, args.dialog_policy) as page:
+        with _session(*session_options(args)) as page:
             with TraceWriter(
                 trace_path,
                 flow=flow["id"],
@@ -121,7 +138,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    with _session(args.headed, args.user_data_dir, args.cdp, args.dialog_policy) as page:
+    with _session(*session_options(args)) as page:
         result = replay_trace(
             args.trace,
             page=page,
@@ -147,6 +164,20 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def session_options(args: argparse.Namespace) -> tuple:
+    """The `_session` arguments, from the shared browser flags."""
+    return (
+        args.headed,
+        args.user_data_dir,
+        args.cdp,
+        args.dialog_policy,
+        args.browser,
+        args.locale,
+        args.timezone,
+        args.user_agent,
+    )
+
+
 def parse_context(pairs: list[str]) -> dict[str, str]:
     context: dict[str, str] = {}
     for pair in pairs:
@@ -162,7 +193,7 @@ def cmd_go(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or "goal.trace.jsonl")
     client = _client()
     try:
-        with _session(args.headed, args.user_data_dir, args.cdp, args.dialog_policy) as page:
+        with _session(*session_options(args)) as page:
             with TraceWriter(
                 trace_path,
                 flow="goal",
@@ -214,7 +245,7 @@ def cmd_play(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or "play.trace.jsonl")
     client = _client()
     try:
-        with _session(args.headed, args.user_data_dir, args.cdp, args.dialog_policy) as page:
+        with _session(*session_options(args)) as page:
             if args.url:
                 page.goto(resolve_url(args.url, Path.cwd()), wait_until="domcontentloaded")
             if args.ready_js:

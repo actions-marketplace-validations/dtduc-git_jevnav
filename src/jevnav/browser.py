@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from typing import Any
 
 DEFAULT_VIEWPORT = {"width": 1280, "height": 900}
+ENGINES = ("chromium", "firefox", "webkit")
 RING = 200  # console messages / network requests kept per page
 
 
@@ -132,13 +133,31 @@ def browser_and_recorder(
     cdp: str | None = None,
     viewport: dict[str, int] | None = None,
     dialog_policy: str = "dismiss",
+    engine: str = "chromium",
+    locale: str | None = None,
+    timezone: str | None = None,
+    user_agent: str | None = None,
 ) -> Iterator[tuple[Any, PageRecorder]]:
     """Yield (page, recorder) from a fresh browser, a profile, or an attached Chrome."""
     from playwright.sync_api import sync_playwright
 
+    if engine not in ENGINES:
+        raise ValueError(f"unknown browser engine {engine!r} (expected one of {list(ENGINES)})")
+    if cdp and engine != "chromium":
+        raise ValueError(
+            "CDP attach only exists for chromium; drop --cdp or use --browser chromium"
+        )
     viewport = viewport or DEFAULT_VIEWPORT
+    context_options = {"viewport": viewport}
+    if locale:
+        context_options["locale"] = locale
+    if timezone:
+        context_options["timezone_id"] = timezone
+    if user_agent:
+        context_options["user_agent"] = user_agent
     manager = sync_playwright()
     playwright = manager.__enter__()
+    browser_type = getattr(playwright, engine)
     try:
         if cdp:
             browser = playwright.chromium.connect_over_cdp(cdp)
@@ -150,7 +169,7 @@ def browser_and_recorder(
                 browser.close()  # disconnects; the browser you attached to keeps running
             return
         if user_data_dir:
-            context = playwright.chromium.launch_persistent_context(
+            context = browser_type.launch_persistent_context(
                 user_data_dir,
                 headless=not headed,
                 viewport=viewport,
@@ -162,9 +181,9 @@ def browser_and_recorder(
             finally:
                 context.close()
             return
-        browser = playwright.chromium.launch(headless=not headed)
+        browser = browser_type.launch(headless=not headed)
         try:
-            context = browser.new_context(viewport=viewport)
+            context = browser.new_context(**context_options)
             page = context.new_page()
             yield page, attach(page, dialog_policy=dialog_policy)
         finally:

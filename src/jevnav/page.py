@@ -148,10 +148,16 @@ CANDIDATE_JS = r"""
   for (const el of document.querySelectorAll(SEL)) {
     if (++seen > 2000) break;
     if (el.closest('[aria-hidden="true"]')) continue;
+    const tag = el.tagName.toLowerCase();
+    const inputType = (el.getAttribute('type') || '').toLowerCase();
+    const isFile = tag === 'input' && inputType === 'file';
     const rect = el.getBoundingClientRect();
     const style = getComputedStyle(el);
-    if (!rect.width || !rect.height) continue;
-    if (style.visibility === 'hidden' || style.display === 'none') continue;
+    // a file input is usually hidden behind a styled label; Playwright can still set it
+    if (!isFile) {
+      if (!rect.width || !rect.height) continue;
+      if (style.visibility === 'hidden' || style.display === 'none') continue;
+    }
     const role = roleOf(el);
     if (role === 'generic') continue;
     const name = accName(el);

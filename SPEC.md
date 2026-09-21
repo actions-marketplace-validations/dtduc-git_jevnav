@@ -119,9 +119,11 @@ If the fingerprint is gone or duplicated, replay refuses to act.
 
 ## Side tools
 
-`console`, `network`, `dialogs`, `read_js`, `wait_for`, `scroll` and the tab
-tools (`tabs`, `new_page`, `select_page`, `close_page`) are the agent's eyes and
-hands around the decision loop. They are **observation and navigation only**:
+`console`, `network`, `dialogs`, `read_js`, `wait_for`, `scroll`, the tab tools
+(`tabs`, `new_page`, `select_page`, `close_page`), `screenshot`, `upload_files`,
+`drag`, `resize`, `emulate`, `route`/`unroute`, `trace_start`/`trace_stop`,
+`perf_metrics`, `heap_snapshot` and `lighthouse` are the agent's eyes and hands
+around the decision loop. They are **observation and navigation only**:
 nothing about them participates in a decision, a gate or a trace's replay path,
 and they are not written to the trace. Dialogs are the exception worth knowing:
 whatever policy resolves them (`--dialog-policy dismiss|accept`) the dialog text

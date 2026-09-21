@@ -100,3 +100,145 @@ def test_tabs_need_jevnavs_own_browser(page, tmp_path):
     with pytest.raises(RuntimeError, match="own browser"):
         session.new_page()
     session.close()
+
+
+def test_screenshot_writes_a_png(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<h1>hello</h1>")
+    out = session.screenshot(str(tmp_path / "shot.png"))
+    assert out["bytes"] > 0
+    assert (tmp_path / "shot.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    session.close()
+
+
+def test_upload_files_sets_a_hidden_file_input(page, tmp_path):
+    session = make_session(page, tmp_path)
+    upload = tmp_path / "avatar.txt"
+    upload.write_text("hello")
+    page.set_content('<input type="file" aria-label="Avatar" style="display:none">')
+    out = session.upload_files([str(upload)], selector="input[type=file]")
+    assert out["files"] == [str(upload)]
+    assert page.evaluate("document.querySelector('input').files[0].name") == "avatar.txt"
+    session.close()
+
+
+def test_upload_files_can_let_jev_choose_the_input(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.client = FakeJev({"upload the avatar": "avatar"}).client()
+    upload = tmp_path / "avatar.txt"
+    upload.write_text("hello")
+    page.set_content(
+        '<input type="file" aria-label="Avatar" style="display:none">'
+        '<input type="file" aria-label="Resume" style="display:none">'
+    )
+    out = session.upload_files([str(upload)], intent="upload the avatar")
+    assert out["target"] == "Avatar"
+    session.close()
+
+
+def test_upload_files_refuses_a_missing_path(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(FileNotFoundError):
+        session.upload_files([str(tmp_path / "nope.txt")], selector="input")
+    session.close()
+
+
+def test_drag_moves_an_element(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content(
+        """
+        <div id="src" style="width:40px;height:40px;background:#333"></div>
+        <div id="dst" style="width:80px;height:80px;background:#eee;margin-top:40px"></div>
+        <script>
+          const src = document.getElementById('src');
+          src.addEventListener('mousedown', () => { src.dataset.dragging = '1'; });
+          document.getElementById('dst').addEventListener('mouseup', () => {
+            if (src.dataset.dragging) document.body.dataset.dropped = 'yes';
+          });
+        </script>
+        """
+    )
+    session.drag(source_selector="#src", target_selector="#dst")
+    assert page.evaluate("document.body.dataset.dropped") == "yes"
+    session.close()
+
+
+def test_resize_and_emulate(page, tmp_path):
+    session = make_session(page, tmp_path)
+    assert session.resize(800, 600) == {"viewport": {"width": 800, "height": 600}}
+    page.set_content("<p id=x>hi</p>")
+    assert page.evaluate("innerWidth") == 800
+    session.emulate(color_scheme="dark")
+    assert page.evaluate("matchMedia('(prefers-color-scheme: dark)').matches") is True
+    assert session.emulate(geolocation="10.5,106.5")["geolocation"] == "10.5,106.5"
+    session.close()
+
+
+def test_route_stubs_and_unroutes(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.route("**/api/data", body='{"stubbed": true}')
+    page.goto(fixture_url("loop-app.html"))
+    value = page.evaluate("async () => (await fetch('https://x.test/api/data')).json()")
+    assert value == {"stubbed": True}
+    session.unroute("**/api/data")
+    session.close()
+
+
+def test_route_can_abort(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.route("**/blocked", abort=True)
+    page.goto(fixture_url("loop-app.html"))
+    js = (
+        "async () => { try { await fetch('https://x.test/blocked'); return false; }"
+        " catch { return true; } }"
+    )
+    failed = page.evaluate(js)
+    assert failed is True
+    session.close()
+
+
+def test_a_playwright_trace_can_be_recorded(page, tmp_path):
+    session = make_session(page, tmp_path)
+    trace = tmp_path / "pw-trace.zip"
+    assert session.trace_start(screenshots=False)["tracing"] is True
+    page.goto(fixture_url("loop-app.html"))
+    out = session.trace_stop(str(trace))
+    assert out["bytes"] > 0
+    assert trace.read_bytes()[:2] == b"PK"  # a zip
+    assert "show-trace" in out["open_with"]
+    session.close()
+
+
+def test_perf_metrics_returns_chromium_counters(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.goto(fixture_url("loop-app.html"))
+    metrics = session.perf_metrics()["metrics"]
+    assert "JSHeapUsedSize" in metrics
+    assert metrics["TaskDuration"] >= 0
+    session.close()
+
+
+def test_heap_snapshot_writes_a_file(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.goto(fixture_url("loop-app.html"))
+    target = tmp_path / "heap.heapsnapshot"
+    out = session.heap_snapshot(str(target))
+    assert out["bytes"] > 1000
+    assert target.read_text()[:1] == "{"
+    session.close()
+
+
+def test_lighthouse_scores_when_npx_is_available(page, tmp_path):
+    import shutil
+
+    if shutil.which("npx") is None:
+        pytest.skip("npx is not installed")
+    session = make_session(page, tmp_path)
+    try:
+        scores = session.lighthouse(fixture_url("loop-app.html"), categories="performance")[
+            "scores"
+        ]
+    except RuntimeError as error:  # offline or lighthouse refused
+        pytest.skip(f"lighthouse did not run: {error}")
+    assert "performance" in scores
+    session.close()

@@ -29,6 +29,15 @@ from .trace import TraceWriter
 ACTION_TYPES = {"click", "fill", "select", "check", "hover", "press"}
 
 
+def build_single_question(
+    page: Any, intent: str, candidates: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The `browse` question shape, reused by the primitives that need a choice."""
+    from .decide import build_question
+
+    return build_question(page.url, page.title(), intent, candidates)
+
+
 def _safe_title(page: Any) -> str:
     try:
         return page.title()[:120]
@@ -52,6 +61,10 @@ class BrowserThread:
         user_data_dir: str | None = None,
         cdp: str | None = None,
         dialog_policy: str = "dismiss",
+        engine: str = "chromium",
+        locale: str | None = None,
+        timezone: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         self._jobs: queue.Queue = queue.Queue()
         self._ready = threading.Event()
@@ -59,6 +72,12 @@ class BrowserThread:
         self._page: Any = None
         self.recorder: Any = None
         self._dialog_policy = dialog_policy
+        self._browser_options = {
+            "engine": engine,
+            "locale": locale,
+            "timezone": timezone,
+            "user_agent": user_agent,
+        }
         self._thread = threading.Thread(
             target=self._serve, args=(headed, user_data_dir, cdp), daemon=True
         )
@@ -81,6 +100,7 @@ class BrowserThread:
                         user_data_dir=user_data_dir,
                         cdp=cdp,
                         dialog_policy=self._dialog_policy,
+                        **self._browser_options,
                     )
                 )
                 self._page, self.recorder = page, recorder
@@ -158,6 +178,10 @@ class Session:
         user_data_dir: str | None = None,
         cdp: str | None = None,
         dialog_policy: str = "dismiss",
+        engine: str = "chromium",
+        locale: str | None = None,
+        timezone: str | None = None,
+        user_agent: str | None = None,
     ) -> None:
         from .cli import _client
 
@@ -172,6 +196,10 @@ class Session:
             "user_data_dir": user_data_dir,
             "cdp": cdp,
             "dialog_policy": dialog_policy,
+            "engine": engine,
+            "locale": locale,
+            "timezone": timezone,
+            "user_agent": user_agent,
         }
         if page is not None:
             from .browser import attach
@@ -192,7 +220,9 @@ class Session:
             self.writer.close()
         if self.browser:
             self.browser.close()
-        self.client.close()
+        close = getattr(self.client, "close", None)
+        if close:
+            close()
 
     def on_page(self, function: Callable[[Any], Any]) -> Any:
         """Run one browser operation, launching the browser the first time it is needed."""
@@ -285,6 +315,255 @@ class Session:
 
         self.browser.switch_page(chooser)
         return self.tabs()
+
+    # ---- acting primitives the agent may need beyond click/fill -------------
+    def screenshot(
+        self, path: str | None = None, *, full_page: bool = False, selector: str | None = None
+    ) -> dict[str, Any]:
+        """Save a PNG for a human (or the agent) to look at. Never used by a decision."""
+        target = Path(path or f"jevnav-screenshot-{int(time.time())}.png")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        def capture(page: Any) -> None:
+            if selector:
+                page.locator(selector).first.screenshot(path=str(target))
+            else:
+                page.screenshot(path=str(target), full_page=full_page)
+
+        self.on_page(capture)
+        return {"path": str(target), "bytes": target.stat().st_size, "full_page": full_page}
+
+    def upload_files(
+        self, paths: list[str], *, selector: str | None = None, intent: str | None = None
+    ) -> dict[str, Any]:
+        """Set files on a file input, chosen by selector or by an intent Jev resolves."""
+        missing = [item for item in paths if not Path(item).exists()]
+        if missing:
+            raise FileNotFoundError(f"no such file: {', '.join(missing)}")
+
+        def choose(page: Any) -> str:
+            if selector:
+                locator = page.locator(selector).first
+            else:
+                candidates, _, _ = page_module.extract(page)
+                files = [c for c in candidates if (c.get("type") or "").lower() == "file"]
+                if not files:
+                    raise RuntimeError("no file input on the page")
+                if intent and len(files) > 1:
+                    question = build_single_question(page, intent, files)
+                    response, _ = self.client.system_one(
+                        {"page": f"{page.title()} — {page.url}"},
+                        {"target": question},
+                        model=self.model,
+                    )
+                    choice = ((response.get("answers") or {}).get("target") or {}).get("choice")
+                    chosen = next((c for c in files if c["cid"] == choice), None)
+                    if chosen is None:
+                        raise RuntimeError("no file input matched the intent")
+                else:
+                    chosen = files[0]
+                locator = page.locator(f'[data-jevcid="{chosen["cid"]}"]').first
+            locator.set_input_files(paths)
+            return locator.get_attribute("aria-label") or "file input"
+
+        label = self.on_page(choose)
+        return {"files": paths, "target": label}
+
+    def drag(
+        self,
+        *,
+        source_selector: str,
+        target_selector: str,
+        source_position: dict[str, float] | None = None,
+        target_position: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
+        """Drag one element onto another (mouse-based, like Playwright's drag_to)."""
+
+        def do(page: Any) -> None:
+            page.locator(source_selector).first.drag_to(
+                page.locator(target_selector).first,
+                source_position=source_position,
+                target_position=target_position,
+            )
+
+        self.on_page(do)
+        return {"dragged": source_selector, "onto": target_selector}
+
+    def resize(self, width: int, height: int) -> dict[str, Any]:
+        self.on_page(lambda page: page.set_viewport_size({"width": width, "height": height}))
+        return {"viewport": {"width": width, "height": height}}
+
+    def emulate(
+        self,
+        *,
+        color_scheme: str | None = None,
+        reduced_motion: str | None = None,
+        forced_colors: str | None = None,
+        media: str | None = None,
+        geolocation: str | None = None,
+        offline: bool | None = None,
+    ) -> dict[str, Any]:
+        """Emulate media, geolocation and connectivity (locale/timezone/UA are launch flags)."""
+        applied: dict[str, Any] = {}
+
+        def run(page: Any) -> None:
+            if color_scheme or reduced_motion or forced_colors or media:
+                page.emulate_media(
+                    color_scheme=color_scheme,
+                    reduced_motion=reduced_motion,
+                    forced_colors=forced_colors,
+                    media=media,
+                )
+            if geolocation is not None:
+                latitude, _, longitude = geolocation.partition(",")
+                page.context.set_geolocation(
+                    {"latitude": float(latitude), "longitude": float(longitude)}
+                )
+                applied["geolocation"] = geolocation
+            if offline is not None:
+                page.context.set_offline(offline)
+                applied["offline"] = offline
+
+        self.on_page(run)
+        for key, value in {
+            "color_scheme": color_scheme,
+            "reduced_motion": reduced_motion,
+            "forced_colors": forced_colors,
+            "media": media,
+        }.items():
+            if value:
+                applied[key] = value
+        return applied or {"note": "nothing asked for"}
+
+    def route(
+        self,
+        pattern: str,
+        *,
+        status: int = 200,
+        body: str | None = None,
+        content_type: str = "application/json",
+        abort: bool = False,
+    ) -> dict[str, Any]:
+        """Stub or block matching requests (tests only; routes are not part of a trace)."""
+
+        def handler(route: Any) -> None:
+            if abort:
+                route.abort()
+            else:
+                route.fulfill(status=status, body=body or "", content_type=content_type)
+
+        self.on_page(lambda page: page.route(pattern, handler))
+        return {"pattern": pattern, "stub": bool(body), "abort": abort, "status": status}
+
+    def unroute(self, pattern: str | None = None) -> dict[str, Any]:
+        if pattern:
+            self.on_page(lambda page: page.unroute(pattern))
+        else:
+            self.on_page(lambda page: page.unroute_all(behavior="ignoreErrors"))
+        return {"unrouted": pattern or "all"}
+
+    def trace_start(self, screenshots: bool = True) -> dict[str, Any]:
+        """Start a Playwright trace (separate from jevnav's decision trace)."""
+        self.on_page(
+            lambda page: page.context.tracing.start(screenshots=screenshots, snapshots=True)
+        )
+        return {"tracing": True, "screenshots": screenshots}
+
+    def trace_stop(self, path: str | None = None) -> dict[str, Any]:
+        target = Path(path or f"jevnav-trace-{int(time.time())}.zip")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self.on_page(lambda page: page.context.tracing.stop(path=str(target)))
+        return {
+            "path": str(target),
+            "bytes": target.stat().st_size,
+            "open_with": "npx playwright show-trace <path>",
+        }
+
+    # ---- profiling: chromium-only, and never part of a decision ------------
+    def perf_metrics(self) -> dict[str, Any]:
+        """Chromium performance counters (CDP Performance.getMetrics) for the page."""
+
+        def collect(page: Any) -> dict[str, float]:
+            cdp = page.context.new_cdp_session(page)
+            cdp.send("Performance.enable")
+            metrics = cdp.send("Performance.getMetrics")["metrics"]
+            cdp.detach()
+            return {item["name"]: item["value"] for item in metrics}
+
+        metrics = self.on_page(collect)
+        interesting = (
+            "Timestamp",
+            "Documents",
+            "Frames",
+            "JSEventListeners",
+            "LayoutCount",
+            "RecalcStyleCount",
+            "ScriptDuration",
+            "LayoutDuration",
+            "RecalcStyleDuration",
+            "TaskDuration",
+            "JSHeapUsedSize",
+            "JSHeapTotalSize",
+        )
+        return {"metrics": {k: v for k, v in metrics.items() if k in interesting}}
+
+    def heap_snapshot(self, path: str | None = None) -> dict[str, Any]:
+        """Write a Chromium heap snapshot (open it in Chrome DevTools > Memory)."""
+        target = Path(path or f"jevnav-heap-{int(time.time())}.heapsnapshot")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        def dump(page: Any) -> None:
+            cdp = page.context.new_cdp_session(page)
+            chunks: list[str] = []
+            cdp.on("HeapProfiler.addHeapSnapshotChunk", lambda event: chunks.append(event["chunk"]))
+            cdp.send("HeapProfiler.enable")
+            cdp.send("HeapProfiler.takeHeapSnapshot", {"reportProgress": False})
+            cdp.detach()
+            target.write_text("".join(chunks))
+
+        self.on_page(dump)
+        return {"path": str(target), "bytes": target.stat().st_size}
+
+    def lighthouse(
+        self,
+        url: str | None = None,
+        *,
+        categories: str = "performance,accessibility,best-practices,seo",
+    ) -> dict[str, Any]:
+        """Run Lighthouse against the current URL through npx (needs node on PATH)."""
+        import shutil
+        import subprocess
+        import tempfile
+
+        if shutil.which("npx") is None:
+            raise RuntimeError("lighthouse needs node/npx on PATH")
+        target = url or self.page.url
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "lighthouse.json"
+            process = subprocess.run(
+                [
+                    "npx",
+                    "-y",
+                    "lighthouse",
+                    target,
+                    "--output=json",
+                    f"--output-path={report}",
+                    "--chrome-flags=--headless=new --no-sandbox",
+                    f"--only-categories={categories}",
+                    "--quiet",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=240,
+            )
+            if not report.exists():
+                raise RuntimeError(f"lighthouse produced no report: {process.stderr.strip()[:300]}")
+            payload = json.loads(report.read_text())
+        scores = {
+            name: (data.get("score") if data.get("score") is None else round(data["score"], 3))
+            for name, data in (payload.get("categories") or {}).items()
+        }
+        return {"url": target, "scores": scores}
 
     def _recorder(self) -> Any:
         if self.recorder is None:
@@ -465,6 +744,10 @@ def serve(
     user_data_dir: str | None = None,
     cdp: str | None = None,
     dialog_policy: str = "dismiss",
+    engine: str = "chromium",
+    locale: str | None = None,
+    timezone: str | None = None,
+    user_agent: str | None = None,
 ) -> int:
     try:
         server_class()
@@ -481,6 +764,10 @@ def serve(
         user_data_dir=user_data_dir,
         cdp=cdp,
         dialog_policy=dialog_policy,
+        engine=engine,
+        locale=locale,
+        timezone=timezone,
+        user_agent=user_agent,
     )
     mcp = server_class()("jevnav")
 
@@ -539,6 +826,107 @@ def serve(
     def network(limit: int = 20, only_failed: bool = False) -> str:
         """Recent network requests; only_failed keeps 4xx/5xx and transport errors."""
         return json.dumps(session.network(limit, only_failed), ensure_ascii=False)
+
+    @mcp.tool()
+    def screenshot(
+        path: str | None = None, full_page: bool = False, selector: str | None = None
+    ) -> str:
+        """Save a PNG of the page (or one element) to a path, for a human to look at."""
+        return json.dumps(
+            session.screenshot(path, full_page=full_page, selector=selector), ensure_ascii=False
+        )
+
+    @mcp.tool()
+    def upload_files(
+        paths: list[str], selector: str | None = None, intent: str | None = None
+    ) -> str:
+        """Set files on a file input, chosen by selector or by an intent Jev resolves."""
+        return json.dumps(
+            session.upload_files(paths, selector=selector, intent=intent), ensure_ascii=False
+        )
+
+    @mcp.tool()
+    def drag(source_selector: str, target_selector: str) -> str:
+        """Drag one element onto another."""
+        return json.dumps(
+            session.drag(source_selector=source_selector, target_selector=target_selector),
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def resize(width: int, height: int) -> str:
+        """Resize the browser viewport."""
+        return json.dumps(session.resize(width, height), ensure_ascii=False)
+
+    @mcp.tool()
+    def emulate(
+        color_scheme: str | None = None,
+        reduced_motion: str | None = None,
+        forced_colors: str | None = None,
+        media: str | None = None,
+        geolocation: str | None = None,
+        offline: bool | None = None,
+    ) -> str:
+        """Emulate media, geolocation ("lat,lon") and connectivity."""
+        return json.dumps(
+            session.emulate(
+                color_scheme=color_scheme,
+                reduced_motion=reduced_motion,
+                forced_colors=forced_colors,
+                media=media,
+                geolocation=geolocation,
+                offline=offline,
+            ),
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def route(
+        pattern: str,
+        status: int = 200,
+        body: str | None = None,
+        content_type: str = "application/json",
+        abort: bool = False,
+    ) -> str:
+        """Stub or block requests matching a URL pattern (testing; not part of a trace)."""
+        return json.dumps(
+            session.route(
+                pattern, status=status, body=body, content_type=content_type, abort=abort
+            ),
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    def unroute(pattern: str | None = None) -> str:
+        """Remove one route stub, or all of them."""
+        return json.dumps(session.unroute(pattern), ensure_ascii=False)
+
+    @mcp.tool()
+    def perf_metrics() -> str:
+        """Chromium performance counters for the current page (CDP)."""
+        return json.dumps(session.perf_metrics(), ensure_ascii=False)
+
+    @mcp.tool()
+    def heap_snapshot(path: str | None = None) -> str:
+        """Write a Chromium heap snapshot to a file."""
+        return json.dumps(session.heap_snapshot(path), ensure_ascii=False)
+
+    @mcp.tool()
+    def lighthouse(
+        url: str | None = None, categories: str = "performance,accessibility,best-practices,seo"
+    ) -> str:
+        """Run Lighthouse (through npx) against the current or given URL and return the scores."""
+        return json.dumps(session.lighthouse(url, categories=categories), ensure_ascii=False)
+
+    @mcp.tool()
+    def trace_start(screenshots: bool = True) -> str:
+        """Start a Playwright trace (open it later with `npx playwright show-trace`)."""
+        return json.dumps(session.trace_start(screenshots), ensure_ascii=False)
+
+    @mcp.tool()
+    def trace_stop(path: str | None = None) -> str:
+        """Stop tracing and write the trace zip."""
+        return json.dumps(session.trace_stop(path), ensure_ascii=False)
 
     @mcp.tool()
     def dialogs() -> str:

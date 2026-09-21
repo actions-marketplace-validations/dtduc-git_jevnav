@@ -258,3 +258,32 @@ def test_a_trace_from_a_profile_run_leaks_nothing_about_the_profile(tmp_path):
     text = trace.read_text()
     assert "do-not-trace" not in text
     assert str(profile) not in text
+
+
+@pytest.mark.parametrize("engine", ["firefox", "webkit"])
+def test_other_engines_can_drive_the_page(engine, tmp_path):
+    """Firefox and WebKit work the same way; skipped when the binary is not installed."""
+
+    def run() -> None:
+        with browser_session(engine=engine) as page:
+            page.set_content('<button aria-label="Go">Go</button>')
+            from jevnav.page import extract
+
+            candidates, _, _ = extract(page)
+            assert any(c["name"] == "Go" for c in candidates)
+
+    try:
+        in_thread(run)
+    except Exception as error:  # playwright raises when the browser is missing
+        if "Executable doesn't exist" in str(error) or "is not found" in str(error):
+            pytest.skip(f"{engine} is not installed (playwright install {engine})")
+        raise
+
+
+def test_cdp_attach_is_chromium_only(tmp_path):
+    def run() -> None:
+        with pytest.raises(ValueError, match="CDP attach only exists for chromium"):
+            with browser_session(cdp="http://127.0.0.1:9222", engine="firefox"):
+                pass
+
+    in_thread(run)
