@@ -66,6 +66,14 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
   attached to, never open a profile Chrome has locked, and never let a profile
   path or cookie reach a trace (`tests/test_browser.py`).
 
+## Diagrams
+
+`docs/architecture.html` (the system), `docs/seq-chrome-devtools.html` and
+`docs/seq-jevnav.html` (the two loops), each built from a committed archify spec
+(`*.sequence.json`, `architecture.archify.json`). Regenerate with the archify
+skill's `deliver` (validate first: 0 errors, 9/9 checks) and re-run
+`visual-check`; never hand-edit the HTML.
+
 ## Guardrails
 
 - Verify before claiming done: lint, format check, tests, and a live smoke when

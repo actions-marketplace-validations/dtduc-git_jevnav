@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "chrome-devtools-mcp: every step is an LLM turn",
+    "output": "docs/seq-chrome-devtools.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "column_fit": "spread",
+    "viewBox": [
+      1050,
+      560
+    ]
+  },
+  "participants": [
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM",
+      "sublabel": "the expensive brain"
+    },
+    {
+      "id": "cdt",
+      "type": "backend",
+      "label": "chrome-devtools MCP",
+      "sublabel": "29 primitives"
+    },
+    {
+      "id": "browser",
+      "type": "cloud",
+      "label": "Browser",
+      "sublabel": "the page"
+    }
+  ],
+  "segments": [
+    {
+      "from": 145,
+      "to": 315,
+      "label": "One action"
+    },
+    {
+      "from": 335,
+      "to": 430,
+      "label": "And again for the next one"
+    }
+  ],
+  "messages": [
+    {
+      "from": "llm",
+      "to": "cdt",
+      "y": 165,
+      "label": "take_snapshot(pageId)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "cdt",
+      "to": "browser",
+      "y": 203,
+      "label": "read the accessibility tree"
+    },
+    {
+      "from": "browser",
+      "to": "cdt",
+      "y": 241,
+      "label": "DOM + a11y",
+      "variant": "return"
+    },
+    {
+      "from": "cdt",
+      "to": "llm",
+      "y": 279,
+      "label": "38,267 chars ≈ 10k tokens into the LLM context",
+      "variant": "return",
+      "note": "the LLM reads it and picks the uid: 1–3s, per step"
+    },
+    {
+      "from": "llm",
+      "to": "cdt",
+      "y": 317,
+      "label": "click(pageId, uid)",
+      "variant": "emphasis"
+    },
+    {
+      "from": "cdt",
+      "to": "browser",
+      "y": 355,
+      "label": "click"
+    },
+    {
+      "from": "browser",
+      "to": "cdt",
+      "y": 393,
+      "label": "page changed",
+      "variant": "return"
+    },
+    {
+      "from": "cdt",
+      "to": "llm",
+      "y": 431,
+      "label": "result",
+      "variant": "return"
+    },
+    {
+      "from": "llm",
+      "to": "cdt",
+      "y": 469,
+      "label": "take_snapshot again…",
+      "variant": "dashed"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "cdt",
+      "from": 157,
+      "to": 300,
+      "type": "backend"
+    },
+    {
+      "participant": "browser",
+      "from": 199,
+      "to": 240,
+      "type": "cloud"
+    },
+    {
+      "participant": "cdt",
+      "from": 290,
+      "to": 380,
+      "type": "backend"
+    },
+    {
+      "participant": "browser",
+      "from": 330,
+      "to": 370,
+      "type": "cloud"
+    }
+  ]
+}

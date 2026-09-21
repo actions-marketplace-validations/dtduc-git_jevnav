@@ -407,6 +407,22 @@ with a calibrated probability, the gate decides whether that may run unattended,
 the action goes back through the DOM, and every step lands in a trace that
 `replay` re-resolves offline.
 
+## Why the loop is cheaper: two sequences
+
+[![chrome-devtools: every step is an LLM turn](docs/seq-chrome-devtools.png)](docs/seq-chrome-devtools.html)
+[![jevnav: one call, every decision made for you](docs/seq-jevnav.png)](docs/seq-jevnav.html)
+
+Same task, different anatomy. With chrome-devtools-mcp the LLM *is* the eyes:
+every step it reads a ~38k-character accessibility snapshot into its own context
+(~10k tokens on a frontier model), decides the element, clicks, and pays for a
+full turn again on the next step. With jevnav the LLM asks once (`goal`), and
+each step is a ~330ms, $0.00004 question to Jev over a ≤120-candidate shortlist
+that never enters the LLM's context — with a gate in between and a trace written
+as it goes. Measured, same LLM, same tasks: Hacker News Newest 18.0s / 2 calls
+against 23.5s / 4; a Wikipedia search 18.1s / 2 against 83s / 14 (and HTTP 403).
+Interactive versions of both sequences: `docs/seq-chrome-devtools.html`,
+`docs/seq-jevnav.html`.
+
 ## Benchmarks
 
 `benchmarks/mcp-compare.py` measures jevnav and chrome-devtools-mcp on the same

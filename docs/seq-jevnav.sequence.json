@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "jevnav: one call, every decision made for you",
+    "output": "docs/seq-jevnav.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "column_fit": "spread",
+    "viewBox": [
+      1050,
+      570
+    ]
+  },
+  "participants": [
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "LLM",
+      "sublabel": "the brain"
+    },
+    {
+      "id": "jevnav",
+      "type": "backend",
+      "label": "jevnav MCP",
+      "sublabel": "acting + evidence"
+    },
+    {
+      "id": "jev",
+      "type": "external",
+      "label": "Jev",
+      "sublabel": "picks, 330ms, $0.00004"
+    },
+    {
+      "id": "browser",
+      "type": "cloud",
+      "label": "Browser",
+      "sublabel": "the page"
+    }
+  ],
+  "segments": [
+    {
+      "from": 145,
+      "to": 305,
+      "label": "The LLM asks once"
+    },
+    {
+      "from": 322,
+      "to": 455,
+      "label": "Per step, without the LLM"
+    },
+    {
+      "from": 475,
+      "to": 505,
+      "label": "Verified result"
+    }
+  ],
+  "messages": [
+    {
+      "from": "llm",
+      "to": "jevnav",
+      "y": 165,
+      "label": "goal(\"sign in and open billing\", success=\"#billing\")",
+      "variant": "emphasis"
+    },
+    {
+      "from": "jevnav",
+      "to": "browser",
+      "y": 205,
+      "label": "read the shortlist"
+    },
+    {
+      "from": "browser",
+      "to": "jevnav",
+      "y": 245,
+      "label": "≤120 ranked candidates, 4.8k chars",
+      "variant": "return"
+    },
+    {
+      "from": "jevnav",
+      "to": "jev",
+      "y": 285,
+      "label": "which element for this step?",
+      "variant": "emphasis"
+    },
+    {
+      "from": "jev",
+      "to": "jevnav",
+      "y": 325,
+      "label": "choice + calibrated p",
+      "variant": "return",
+      "note": "330ms, $0.00004 — then the gate, before anything runs"
+    },
+    {
+      "from": "jevnav",
+      "to": "browser",
+      "y": 365,
+      "label": "act: role locator, not pixels"
+    },
+    {
+      "from": "browser",
+      "to": "jevnav",
+      "y": 405,
+      "label": "page changed",
+      "variant": "return"
+    },
+    {
+      "from": "jevnav",
+      "to": "jev",
+      "y": 445,
+      "label": "next step…",
+      "variant": "dashed"
+    },
+    {
+      "from": "jevnav",
+      "to": "llm",
+      "y": 485,
+      "label": "done, verified: true — 5 steps, $0.000212",
+      "variant": "return",
+      "note": "the trace is already written"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "jevnav",
+      "from": 157,
+      "to": 495,
+      "type": "backend"
+    },
+    {
+      "participant": "browser",
+      "from": 199,
+      "to": 245,
+      "type": "cloud"
+    },
+    {
+      "participant": "jev",
+      "from": 297,
+      "to": 345,
+      "type": "external"
+    },
+    {
+      "participant": "browser",
+      "from": 375,
+      "to": 418,
+      "type": "cloud"
+    },
+    {
+      "participant": "jev",
+      "from": 438,
+      "to": 452,
+      "type": "external"
+    }
+  ]
+}
