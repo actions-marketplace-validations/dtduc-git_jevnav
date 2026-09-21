@@ -18,7 +18,7 @@ complete or broken, never half-read).
 | `spec` | int | trace format version (currently `0`) |
 | `started` | ISO-8601 UTC | when the run started |
 | `tool` | string | e.g. `jevnav/0.1.0` |
-| `order_spec` | int | version of the shortlist ordering (`page.ORDER_SPEC`); replay excuses a position change on an identical candidate set only across different versions |
+| `order_spec` | int | version of the shortlist ordering (`ORDER_SPEC` in `trace.py`, bumped with `page.py`'s ROLE_RANK/global_order); replay excuses a position change on an identical candidate set only across different versions |
 | `flow` | string | flow id, or `mcp-session` |
 | `model` | string | requested model (`jev-latest`, …) |
 | `start` | string | start URL (flows only) |
@@ -115,7 +115,7 @@ For each step, in order:
    - fingerprint matches more than one element → `ambiguous`
    - fingerprint matches one element at a different position → `moved`, unless
      the candidate set is identical **and** the trace's `run.order_spec` differs
-     from the running `page.ORDER_SPEC`: different ordering logic may re-rank the
+     from the running `ORDER_SPEC`: different ordering logic may re-rank the
      shortlist, while the same ordering and the same set mean the page itself
      reordered. Traces without the field fall back to their `tool` version, and
      an unknown ordering never excuses movement

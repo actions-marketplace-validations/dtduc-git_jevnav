@@ -241,11 +241,8 @@ ROLE_RANK = {
 }
 
 
-# Version of the shortlist ordering (ROLE_RANK, global_order, the cap). Bump it
-# only when the order or the cap changes: replay excuses a position change on an
-# identical candidate set across different ordering versions, and a wrong bump
-# would hide real movement. Recorded in every trace as ``run.order_spec``.
-ORDER_SPEC = 2
+# Changing ROLE_RANK, global_order or the cap changes the shortlist ordering:
+# bump trace.ORDER_SPEC with it, or replay will hide real movement.
 
 
 def candidate_key(candidate: dict[str, Any]) -> str:

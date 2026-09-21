@@ -22,6 +22,12 @@ from typing import Any
 from . import __version__
 
 SPEC = 0
+# Version of the shortlist ordering (ROLE_RANK, global_order, the cap in
+# page.py). Bump it only when the order or the cap changes: replay excuses a
+# position change on an identical candidate set across different ordering
+# versions, and a wrong bump would hide real movement. Recorded in every trace
+# as ``run.order_spec``.
+ORDER_SPEC = 2
 
 
 def normalize_name(name: str) -> str:
@@ -115,8 +121,6 @@ class TraceWriter:
     """Append-only JSONL writer; every step is flushed so a crash keeps evidence."""
 
     def __init__(self, path: str | Path, **run_meta: Any) -> None:
-        from .page import ORDER_SPEC  # page imports trace, so import at call time
-
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self.path.open("w")

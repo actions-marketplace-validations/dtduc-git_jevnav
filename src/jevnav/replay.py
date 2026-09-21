@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from . import page as page_module
-from .trace import read_trace
+from .trace import ORDER_SPEC, read_trace
 
 OK = "ok"
 MOVED = "moved"
@@ -149,7 +149,7 @@ def replay_step(
         # With an identical candidate set, a position difference can only be a
         # re-ranking — and only *different* ordering logic may re-rank. The same
         # ordering + same set means the page itself reordered.
-        same_order = recorded_order_spec == page_module.ORDER_SPEC
+        same_order = recorded_order_spec == ORDER_SPEC
         reranked = result["page_identical"] and recorded_order_spec is not None and not same_order
         result["moved"] = index != recorded_index and not reranked
         result["verdict"] = MOVED if result["moved"] else OK
@@ -157,7 +157,7 @@ def replay_step(
         if index != recorded_index and reranked:
             result["reason"] += (
                 f" (the shortlist was re-ranked: trace ordering v{recorded_order_spec}, "
-                f"now v{page_module.ORDER_SPEC})"
+                f"now v{ORDER_SPEC})"
             )
     return result
 
