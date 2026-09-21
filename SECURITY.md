@@ -36,6 +36,16 @@ A trace is evidence, and evidence can be sensitive: it holds page URLs, element
 names and the actions taken. Traces are gitignored by default. Read one before
 sharing it, and prefer `${ENV}` for anything you would not paste into a ticket.
 
+## Your profile, your cookies
+
+With `--user-data-dir` jevnav reads and writes a Chromium profile of your
+choosing; with `--cdp` it acts inside the Chrome you already have open, with
+everything that browser is logged into. Anything jevnav decides can then act as
+you on those sites — that is the point, and it is also the risk. Point it at
+your own accounts deliberately, and prefer a dedicated profile over your daily
+one. jevnav only talks to the running instance over CDP; it never opens a
+profile Chrome has locked, and it never closes a browser it attached to.
+
 ## Acting on a page
 
 `browse` and `run` execute actions only when the gate says `auto`. `review` and

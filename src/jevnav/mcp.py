@@ -38,31 +38,40 @@ class BrowserThread:
     it and waited for — one agent, one browser, one call at a time.
     """
 
-    def __init__(self, headed: bool = False, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        headed: bool = False,
+        timeout: float = 60.0,
+        user_data_dir: str | None = None,
+        cdp: str | None = None,
+    ) -> None:
         self._jobs: queue.Queue = queue.Queue()
         self._ready = threading.Event()
         self._error: BaseException | None = None
-        self._thread = threading.Thread(target=self._serve, args=(headed,), daemon=True)
+        self._thread = threading.Thread(
+            target=self._serve, args=(headed, user_data_dir, cdp), daemon=True
+        )
         self._thread.start()
         if not self._ready.wait(timeout):
             raise TimeoutError("the browser did not start in time")
         if self._error is not None:
             raise self._error
 
-    def _serve(self, headed: bool) -> None:
-        try:
-            from playwright.sync_api import sync_playwright
+    def _serve(self, headed: bool, user_data_dir: str | None, cdp: str | None) -> None:
+        from contextlib import ExitStack
 
-            manager = sync_playwright()
-            playwright = manager.__enter__()
-            browser = playwright.chromium.launch(headless=not headed)
-            page = browser.new_page(viewport={"width": 1280, "height": 900})
-        except BaseException as error:  # surfaced in the caller's thread
-            self._error = error
+        from .browser import browser_session
+
+        with ExitStack() as stack:
+            try:
+                page = stack.enter_context(
+                    browser_session(headed=headed, user_data_dir=user_data_dir, cdp=cdp)
+                )
+            except BaseException as error:  # surfaced in the caller's thread
+                self._error = error
+                self._ready.set()
+                return
             self._ready.set()
-            return
-        self._ready.set()
-        try:
             while True:
                 job = self._jobs.get()
                 if job is None:
@@ -74,9 +83,6 @@ class BrowserThread:
                     box["error"] = error
                 finally:
                     box["done"].set()
-        finally:
-            browser.close()
-            manager.__exit__(None, None, None)
 
     def call(self, function: Callable[..., Any], *args: Any) -> Any:
         box: dict[str, Any] = {"done": threading.Event()}
@@ -119,6 +125,8 @@ class Session:
         headed: bool = False,
         page: Any = None,
         client: Any = None,
+        user_data_dir: str | None = None,
+        cdp: str | None = None,
     ) -> None:
         from .cli import _client
 
@@ -128,7 +136,7 @@ class Session:
         self.browser: BrowserThread | None = None
         self.page = page
         if page is None:
-            self.browser = BrowserThread(headed=headed)
+            self.browser = BrowserThread(headed=headed, user_data_dir=user_data_dir, cdp=cdp)
             self.page = self.on_page(lambda browser_page: browser_page)
         self.writer = None
         if trace:
@@ -323,6 +331,8 @@ def serve(
     gates: str | None = None,
     model: str = "jev-latest",
     headed: bool = False,
+    user_data_dir: str | None = None,
+    cdp: str | None = None,
 ) -> int:
     try:
         server_class()
@@ -330,7 +340,15 @@ def serve(
         print("the MCP server needs the optional dependency: pip install 'jevnav[mcp]'")
         return 2
 
-    session = Session(start=start, trace=trace, gates=gates, model=model, headed=headed)
+    session = Session(
+        start=start,
+        trace=trace,
+        gates=gates,
+        model=model,
+        headed=headed,
+        user_data_dir=user_data_dir,
+        cdp=cdp,
+    )
     mcp = server_class()("jevnav")
 
     @mcp.tool()

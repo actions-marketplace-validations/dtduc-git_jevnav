@@ -103,6 +103,13 @@ Actions are resolved by **fingerprint**, never by position, and an action whose
 value came from `${ENV}` reads the variable from the environment at replay time.
 If the fingerprint is gone or duplicated, replay refuses to act.
 
+## Browser modes
+
+A trace is independent of how the browser was obtained: fresh headless
+Chromium, a persistent profile (`--user-data-dir`) or an attached Chrome
+(`--cdp`). Nothing about the profile — its path, its cookies, its extensions —
+is written to a trace, and the `run` header carries no browser-mode field.
+
 ## Gates
 
 `gates.yaml` (optional, per flow) decides whether a decision may be acted on

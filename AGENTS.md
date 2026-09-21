@@ -41,6 +41,10 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
 - Local-first: no telemetry, no hosted service, no screenshots in the decision
   loop. Traces stay local (`*.trace.jsonl` is gitignored, example traces
   excepted).
+- Browser modes live in `browser.py` and nowhere else: fresh, persistent profile
+  (`--user-data-dir`), attached Chrome (`--cdp`). Never close a browser you
+  attached to, never open a profile Chrome has locked, and never let a profile
+  path or cookie reach a trace (`tests/test_browser.py`).
 
 ## Guardrails
 

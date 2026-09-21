@@ -96,6 +96,30 @@ Change `Sign in` to `Log in` on the site and the same replay reports:
 
 Exit code 1, with the reason — that is the CI gate.
 
+## Your own Chrome (logins, cookies, extensions)
+
+Three ways to get a browser:
+
+```bash
+jevnav go --goal "..."                      # default: fresh headless Chromium, no cookies
+jevnav go --goal "..." --user-data-dir ~/.cache/jevnav-profile --headed
+jevnav go --goal "..." --cdp http://127.0.0.1:9222
+```
+
+- `--user-data-dir` is a persistent Chromium profile: run once with `--headed`,
+  log in by hand, and every later run (headless or not) is already logged in.
+  Headful mode needs the full browser: `playwright install chromium`.
+- `--cdp` attaches to a Chrome you already have open — your session, your
+  extensions, the tab you are looking at. Start it with
+  `--remote-debugging-port=9222` (or use `chrome://inspect` to find the port).
+  jevnav picks the last real page it finds, and never closes your browser.
+
+Both flags work on `run`, `go`, `replay` and `mcp`. A trace records what was
+decided, never which profile was used: cookies and profile paths never reach it.
+
+Use the same freedom for authentication: pass credentials as context and let the
+goal fill a login form when a stale cookie would be worse than a fresh login.
+
 ## Gates
 
 ```yaml

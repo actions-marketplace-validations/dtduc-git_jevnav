@@ -37,18 +37,24 @@ def _api_key() -> str | None:
 
 
 @contextmanager
-def _session(headed: bool):
-    from playwright.sync_api import sync_playwright
+def _session(headed: bool, user_data_dir: str | None = None, cdp: str | None = None):
+    from .browser import browser_session
 
-    manager = sync_playwright()
-    playwright = manager.__enter__()
-    browser = playwright.chromium.launch(headless=not headed)
-    page = browser.new_page(viewport={"width": 1280, "height": 900})
-    try:
+    with browser_session(headed=headed, user_data_dir=user_data_dir, cdp=cdp) as page:
         yield page
-    finally:
-        browser.close()
-        manager.__exit__(None, None, None)
+
+
+def add_browser_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--headed", action="store_true", help="show the browser")
+    parser.add_argument(
+        "--user-data-dir",
+        help="persistent Chromium profile: log in once (headful), stay logged in",
+    )
+    parser.add_argument(
+        "--cdp",
+        help="attach to a running Chrome over CDP, e.g. http://127.0.0.1:9222 "
+        "(start Chrome with --remote-debugging-port=9222)",
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -61,7 +67,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or f"{flow['id']}.trace.jsonl")
     client = _client()
     try:
-        with _session(args.headed) as page:
+        with _session(args.headed, args.user_data_dir, args.cdp) as page:
             with TraceWriter(
                 trace_path,
                 flow=flow["id"],
@@ -98,7 +104,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    with _session(args.headed) as page:
+    with _session(args.headed, args.user_data_dir, args.cdp) as page:
         result = replay_trace(
             args.trace,
             page=page,
@@ -139,7 +145,7 @@ def cmd_go(args: argparse.Namespace) -> int:
     trace_path = Path(args.trace or "goal.trace.jsonl")
     client = _client()
     try:
-        with _session(args.headed) as page:
+        with _session(args.headed, args.user_data_dir, args.cdp) as page:
             with TraceWriter(
                 trace_path,
                 flow="goal",
@@ -191,6 +197,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         gates=args.gates,
         model=args.model,
         headed=args.headed,
+        user_data_dir=args.user_data_dir,
+        cdp=args.cdp,
     )
 
 
@@ -207,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--gates", help="gates.yaml (default: next to the flow)")
     run.add_argument("--report", help="write a markdown report here")
     run.add_argument("--model", default="jev-latest")
-    run.add_argument("--headed", action="store_true", help="show the browser")
+    add_browser_flags(run)
     run.add_argument("--dry-run", action="store_true", help="decide and record, but never act")
     run.add_argument("--json", action="store_true", help="print JSON instead of markdown")
     run.set_defaults(func=cmd_run)
@@ -220,7 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--execute", action="store_true", help="also re-run the recorded actions")
     replay.add_argument("--settle-ms", type=int, default=300)
     replay.add_argument("--report", help="write a markdown report here")
-    replay.add_argument("--headed", action="store_true")
+    add_browser_flags(replay)
     replay.add_argument("--json", action="store_true")
     replay.set_defaults(func=cmd_replay)
 
@@ -248,7 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
     go.add_argument("--gates", help="gates.yaml")
     go.add_argument("--report", help="write a markdown report here")
     go.add_argument("--model", default="jev-latest")
-    go.add_argument("--headed", action="store_true")
+    add_browser_flags(go)
     go.add_argument("--dry-run", action="store_true", help="decide and record, but never act")
     go.add_argument(
         "--allow-risky",
@@ -264,6 +272,10 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.add_argument("--gates", help="gates.yaml")
     mcp.add_argument("--model", default="jev-latest")
     mcp.add_argument("--headed", action="store_true")
+    mcp.add_argument("--user-data-dir", help="persistent Chromium profile to reuse")
+    mcp.add_argument(
+        "--cdp", help="attach to a running Chrome over CDP, e.g. http://127.0.0.1:9222"
+    )
     mcp.set_defaults(func=cmd_mcp)
     return parser
 
