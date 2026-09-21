@@ -38,8 +38,21 @@ class FlowError(RuntimeError):
 
 
 def resolve_url(value: str, base_dir: Path) -> str:
-    """URLs pass through; a relative path becomes a file:// URL next to the flow."""
-    return value if "://" in value else (base_dir / value).resolve().as_uri()
+    """URLs pass through; a relative path becomes a file:// URL next to the flow.
+
+    A query string survives (``game.html?seed=7``), which is how a local fixture
+    gets configured without a server.
+    """
+    if "://" in value:
+        return value
+    path_part, _, fragment = value.partition("#")
+    path_part, _, query = path_part.partition("?")
+    url = (base_dir / path_part).resolve().as_uri()
+    if query:
+        url += f"?{query}"
+    if fragment:
+        url += f"#{fragment}"
+    return url
 
 
 def load_flow(path: str | Path) -> dict[str, Any]:

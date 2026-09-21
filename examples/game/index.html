@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jevnav Drop — catch the green, dodge the red</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #10141c; color: #e8ecf4; }
+  h1 { font-size: 15px; margin: 12px 16px 4px; font-weight: 600; }
+  #hud { margin: 0 16px 8px; font-variant-numeric: tabular-nums; }
+  canvas { display: block; margin: 0 16px 16px; background: #1a2130; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>Jevnav Drop</h1>
+<div id="hud">score 0 · misses 0 · caught 0 / 0</div>
+<canvas id="stage" width="640" height="420"></canvas>
+<script>
+// Paced for an agent that decides a few times per second: items fall slowly
+// enough that a decision every ~300ms is still a fair controller. The RNG is
+// seeded so a Jev run and a random run can be compared on identical spawns.
+const W = 640, H = 420, PAD = 14, PLAYER_W = 72, PLAYER_H = 14, ITEM = 18;
+const CATCHER_SPEED = 220, FALL_MIN = 90, FALL_MAX = 125;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
+const keys = new Set();
+
+let seed = Number(new URLSearchParams(location.search).get('seed') || 7);
+let rng = mulberry32(seed);
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rand = (a, b) => a + rng() * (b - a);
+
+let playerX = (W - PLAYER_W) / 2;
+let items = [], score = 0, misses = 0, spawned = 0, caught = 0, last = performance.now(), spawnIn = 0;
+
+function spawn() {
+  const kind = rng() < 0.5 ? 'green' : 'red';
+  items.push({ x: rand(PAD, W - PAD - ITEM), y: -ITEM, vy: rand(FALL_MIN, FALL_MAX), kind });
+  spawned++;
+}
+
+addEventListener('keydown', (e) => keys.add(e.key));
+addEventListener('keyup', (e) => keys.delete(e.key));
+
+function step(dt) {
+  if (keys.has('ArrowLeft')) playerX -= CATCHER_SPEED * dt;
+  if (keys.has('ArrowRight')) playerX += CATCHER_SPEED * dt;
+  playerX = Math.max(PAD, Math.min(W - PAD - PLAYER_W, playerX));
+  spawnIn -= dt;
+  // one item at a time: each decision is a clean go-left / go-right / stay
+  if (!items.length && spawnIn <= 0) { spawn(); spawnIn = rand(0.4, 0.9); }
+  const py = H - 40;
+  for (const it of items) {
+    it.y += it.vy * dt;
+    const hitX = it.x + ITEM > playerX && it.x < playerX + PLAYER_W;
+    const hitY = it.y + ITEM > py && it.y < py + PLAYER_H;
+    if (hitX && hitY && !it.done) {
+      it.done = true;
+      if (it.kind === 'green') { score++; caught++; } else { misses++; score = Math.max(0, score - 1); }
+    }
+  }
+  items = items.filter((it) => !it.done && it.y < H + ITEM);
+  hud.textContent = `score ${score} · misses ${misses} · caught ${caught} / ${spawned}`;
+}
+
+function draw() {
+  ctx.fillStyle = '#1a2130'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#2b3550'; ctx.fillRect(0, H - 34, W, 34);
+  ctx.fillStyle = '#7dd3fc'; ctx.fillRect(playerX, H - 40, PLAYER_W, PLAYER_H);
+  for (const it of items) {
+    ctx.fillStyle = it.kind === 'green' ? '#4ade80' : '#f87171';
+    ctx.fillRect(it.x, it.y, ITEM, ITEM);
+  }
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  step(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---- the state probe jevnav reads, and the score it reports -------------
+window.jevnavState = () => {
+  const py = H - 40;
+  const describe = (it) => {
+    const offset = Math.round(it.x + ITEM / 2 - (playerX + PLAYER_W / 2));
+    const where = Math.abs(offset) <= 8 ? 'dead on'
+      : `${Math.abs(offset)}px to the ${offset < 0 ? 'left' : 'right'}`;
+    return `${it.kind} ${Math.round(py - it.y)}px above the catcher, ${where}`;
+  };
+  const falling = items.map((it) => ({ it, drop: py - it.y })).sort((a, b) => a.drop - b.drop);
+  const lines = falling.slice(0, 4).map(({ it }) => describe(it));
+  return [
+    `score ${score}, misses ${misses}, catcher at ${Math.round(playerX)} of ${W}`,
+    `falling (most urgent first): ${lines.length ? lines.join('; ') : 'nothing'}`,
+  ].join('. ');
+};
+window.jevnavScore = () => score;
+// structured variant of the same observation, for a scripted control run
+window.jevnavItems = () => ({
+  score, misses, catcher: Math.round(playerX), width: W, catcherWidth: PLAYER_W,
+  items: items.map((it) => ({ kind: it.kind, x: Math.round(it.x), drop: Math.round((H - 40) - it.y) })),
+});
+</script>
+</body>
+</html>

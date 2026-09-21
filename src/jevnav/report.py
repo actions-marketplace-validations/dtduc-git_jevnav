@@ -186,3 +186,22 @@ def render_goal_report(
             )
         )
     return "\n".join(lines) + "\n"
+
+
+def render_play_report(summary: dict[str, Any], *, trace_path: str) -> str:
+    score = "n/a" if summary.get("score") is None else summary["score"]
+    lines = [f"# jevnav play — {summary['goal']}", ""]
+    lines.append(f"- policy: `{summary['policy']}` · score: **{score}**")
+    lines.append(
+        f"- decisions: {summary['steps']} in {summary['seconds']}s → **{summary['rate_hz']}/s** "
+        f"(asked for {summary['requested_rate_hz']}/s)"
+    )
+    if summary.get("latency_p50_ms") is not None:
+        p95 = summary.get("latency_p95_ms") or summary["latency_p50_ms"]
+        lines.append(f"- Jev latency: p50 {summary['latency_p50_ms']:.0f}ms, p95 {p95:.0f}ms")
+    lines.append(f"- cost: ${summary['cost_usd']:.6f} · errors: {summary['errors']}")
+    lines.append(
+        "- actions: " + ", ".join(f"{name} ×{count}" for name, count in summary["actions"].items())
+    )
+    lines.append(f"- trace: `{trace_path}`")
+    return "\n".join(lines) + "\n"

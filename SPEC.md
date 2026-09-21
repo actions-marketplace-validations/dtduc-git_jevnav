@@ -178,3 +178,24 @@ Loop rules, all deterministic:
 
 `replay --execute` re-runs a loop trace and re-checks the recorded `success`
 selector, so an agent run becomes a deterministic CI test.
+
+## Play mode (`jevnav play`)
+
+The Doom shape: the caller supplies a JS state probe and an action set; there is
+no candidate extraction. One request per tick, and movement keys stay held
+between decisions.
+
+| field | meaning |
+|---|---|
+| `state` | the probe's output, whitespace-collapsed, capped at 1200 characters |
+| `state_hash` | hash of that state text, so a run can be compared tick by tick |
+| `decision` | as usual (`choice`, `confidence`, `probabilities`, `model`, `latency_ms`, `usage`, `cost_usd`, `error`) |
+| `action` | `{type: "hold", key}` — the key held from this tick on |
+| `gate` | always `{verdict: "n/a"}`: a game action has no blast radius, and a review queue at 5Hz is a queue nobody reads |
+| `elapsed_ms` | how long the tick took (decision + action) |
+
+The `run` header carries `goal`, `actions`, `rate_hz`, `seconds` and `policy`.
+A play trace is evidence, not a fingerprint replay: a live game state is not
+reproducible, so `replay` on it re-resolves nothing. `--policy random` runs the
+identical loop with no model call, which is the control run for any claim about
+the agent's play.

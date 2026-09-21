@@ -8,6 +8,7 @@ from typing import Any
 from jevassert.client import JevClient
 
 FIXTURES = Path(__file__).parent / "fixtures"
+EXAMPLES = Path(__file__).parent.parent / "examples"
 
 LOOP_DEFAULTS = {"status": "in_progress", "action": "click", "value_key": "none", "target": "none"}
 
@@ -58,7 +59,15 @@ class FakeJev:
         )
 
     def _single_answers(self, questions: dict[str, Any]) -> dict[str, Any]:
-        criteria: dict[str, str] = questions["target"]["criteria"]
+        if "target" not in questions and "action" in questions:  # play mode
+            criteria: dict[str, str] = questions["action"]["criteria"]
+            if self.script:
+                name = self.script.pop(0)
+                choice = name if name in criteria else self._find(criteria, name)
+                return {"action": self._choice(choice, self.confidence, list(criteria))}
+            choice, confidence = self._answer(questions["action"]["instructions"], criteria)
+            return {"action": self._choice(choice, confidence, list(criteria))}
+        criteria = questions["target"]["criteria"]
         instructions = questions["target"]["instructions"]
         choice, confidence = self._answer(instructions, criteria)
         return {"target": self._choice(choice, confidence, list(criteria))}
@@ -113,3 +122,8 @@ class FakeJev:
 
 def fixture_url(name: str) -> str:
     return (FIXTURES / name).as_uri()
+
+
+def example_url(name: str) -> str:
+    """Examples are shipped artifacts: tests point at them so they cannot rot."""
+    return (EXAMPLES / name).as_uri()

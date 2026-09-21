@@ -66,6 +66,15 @@ def test_relative_start_becomes_a_file_url(tmp_path, app_url):
     assert load_flow(path)["start"] == (tmp_path / "app.html").resolve().as_uri()
 
 
+def test_a_local_url_keeps_its_query_string(tmp_path):
+    from jevnav.flow import resolve_url
+
+    (tmp_path / "game.html").write_text("<html></html>")
+    url = resolve_url("game.html?seed=11", tmp_path)
+    assert url.endswith("game.html?seed=11")
+    assert "%3F" not in url
+
+
 def test_action_public_references_env_instead_of_copying_it():
     assert action_public({"action": "fill", "value": "${PW}"}) == {
         "type": "fill",

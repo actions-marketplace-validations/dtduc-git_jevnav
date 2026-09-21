@@ -41,6 +41,10 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
 - Local-first: no telemetry, no hosted service, no screenshots in the decision
   loop. Traces stay local (`*.trace.jsonl` is gitignored, example traces
   excepted).
+- Play mode (`play.py`) is measured against `--policy random` at the same rate,
+  always. Never claim a game result without the control run beside it, and never
+  tune the bundled game until the agent wins: the honest number here is the
+  decisions-per-second ceiling (1 / Jev latency), not the score.
 - Browser modes live in `browser.py` and nowhere else: fresh, persistent profile
   (`--user-data-dir`), attached Chrome (`--cdp`). Never close a browser you
   attached to, never open a profile Chrome has locked, and never let a profile

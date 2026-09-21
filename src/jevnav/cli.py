@@ -12,8 +12,9 @@ from . import __version__
 from .agent import run_goal, summarize_goal
 from .flow import FlowError, load_flow, recorded_url, resolve_url, run_flow, summarize_run
 from .gates import load_gates
+from .play import parse_actions, play
 from .replay import replay_trace
-from .report import render_goal_report, render_replay_report, render_run_report
+from .report import render_goal_report, render_play_report, render_replay_report, render_run_report
 from .trace import TraceWriter
 
 EXIT_OK = 0
@@ -188,6 +189,62 @@ def cmd_go(args: argparse.Namespace) -> int:
     return EXIT_FAILED
 
 
+def cmd_play(args: argparse.Namespace) -> int:
+    """Real-time play (the Doom shape): a state probe, an action set, a fixed rate."""
+    if not args.state_js and not args.state:
+        raise FlowError("play needs a state probe: --state-js <file> or --state '<js>'")
+    state_js = Path(args.state_js).read_text() if args.state_js else args.state
+    actions = parse_actions(args.actions)
+    trace_path = Path(args.trace or "play.trace.jsonl")
+    client = _client()
+    try:
+        with _session(args.headed, args.user_data_dir, args.cdp) as page:
+            if args.url:
+                page.goto(resolve_url(args.url, Path.cwd()), wait_until="domcontentloaded")
+            if args.ready_js:
+                page.wait_for_function(args.ready_js, timeout=args.ready_timeout * 1000)
+            with TraceWriter(
+                trace_path,
+                flow="play",
+                goal=args.goal,
+                actions=list(actions),
+                rate_hz=args.rate,
+                seconds=args.seconds,
+                policy=args.policy,
+                model=args.model,
+                tool=f"jevnav/{__version__}",
+            ) as writer:
+                result = play(
+                    goal=args.goal,
+                    page=page,
+                    client=client,
+                    writer=writer,
+                    state_js=state_js,
+                    actions=actions,
+                    model=args.model,
+                    rate_hz=args.rate,
+                    seconds=args.seconds,
+                    max_steps=args.max_steps,
+                    score_js=args.score_js,
+                    policy=args.policy,
+                    seed=args.seed,
+                )
+    finally:
+        client.close()
+    summary = {k: v for k, v in result.items() if k != "steps_detail"}
+    report = render_play_report(summary, trace_path=str(trace_path))
+    if args.report:
+        Path(args.report).write_text(report)
+    if args.json:
+        print(json.dumps(summary, indent=2))
+    else:
+        print(report, end="")
+        print(f"trace: {trace_path}")
+    if summary["errors"] and args.policy == "jev":
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp import serve
 
@@ -265,6 +322,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     go.add_argument("--json", action="store_true")
     go.set_defaults(func=cmd_go)
+
+    play = sub.add_parser(
+        "play",
+        help="play a real-time game: a JS state probe, a small action set, a fixed decision rate",
+    )
+    play.add_argument(
+        "--goal", required=True, help='e.g. "catch the green blocks, dodge the red ones"'
+    )
+    play.add_argument("--url", help="game URL (local paths become file:// URLs)")
+    play.add_argument(
+        "--state-js",
+        help="file with a JS expression returning the state text, e.g. window.jevnavState()",
+    )
+    play.add_argument("--state", help="the same JS expression inline")
+    play.add_argument(
+        "--actions",
+        action="append",
+        required=True,
+        metavar="NAME[=KEY]",
+        help="action set, e.g. --actions 'left=ArrowLeft' --actions 'right=ArrowRight'",
+    )
+    play.add_argument("--rate", type=float, default=5.0, help="decisions per second (default 5)")
+    play.add_argument("--seconds", type=float, default=20.0)
+    play.add_argument(
+        "--max-steps", type=int, default=0, help="also stop after this many decisions"
+    )
+    play.add_argument(
+        "--score-js", help="JS expression evaluated at the end, e.g. window.jevnavScore()"
+    )
+    play.add_argument(
+        "--policy",
+        choices=["jev", "random"],
+        default="jev",
+        help="'random' is the control run: same loop, no model, no cost",
+    )
+    play.add_argument("--seed", type=int, help="seed for --policy random")
+    play.add_argument(
+        "--ready-js",
+        help="wait for this JS condition before playing, e.g. '() => !!window.jevnavState'",
+    )
+    play.add_argument("--ready-timeout", type=float, default=15.0)
+    play.add_argument("--trace", help="where to write the trace (default play.trace.jsonl)")
+    play.add_argument("--report", help="write a markdown report here")
+    play.add_argument("--model", default="jev-latest")
+    play.add_argument("--json", action="store_true")
+    add_browser_flags(play)
+    play.set_defaults(func=cmd_play)
 
     mcp = sub.add_parser("mcp", help="serve jevnav as an MCP tool (needs jevnav[mcp])")
     mcp.add_argument("--start", help="initial URL to open")
