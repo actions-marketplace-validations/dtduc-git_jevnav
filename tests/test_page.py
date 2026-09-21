@@ -206,3 +206,61 @@ def test_icon_only_controls_still_get_a_name(page, tmp_path):
     assert "Home" in names  # img alt inside the link
     assert "Save" in names  # svg title inside the button
     assert len(candidates) == 3  # the empty-alt link stays out
+
+
+IFRAME_AND_SHADOW = """
+<html><body>
+  <button>Outside</button>
+  <iframe srcdoc="<button onclick=&quot;window.clicked='yes'&quot;>Pay now</button>"></iframe>
+  <my-widget></my-widget>
+  <script>
+    class MyWidget extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = '<button id=inner>Save draft</button>';
+      }
+    }
+    customElements.define('my-widget', MyWidget);
+  </script>
+</body></html>
+"""
+
+
+def test_controls_inside_iframes_and_shadow_roots_are_candidates(page, tmp_path):
+    path = tmp_path / "frames.html"
+    path.write_text(IFRAME_AND_SHADOW)
+    page.goto(path.as_uri())
+    page.wait_for_timeout(200)
+    candidates, total, _ = extract(page)
+    by_name = {c["name"]: c for c in candidates}
+    assert "Outside" in by_name
+    assert "Pay now" in by_name  # inside an iframe
+    assert "Save draft" in by_name  # inside an open shadow root
+    assert by_name["Pay now"]["frame"] != by_name["Outside"]["frame"]
+    assert all(":" in c["cid"] for c in candidates)  # cids are frame-namespaced
+
+
+def test_executing_acts_inside_the_right_frame(page, tmp_path):
+    path = tmp_path / "frames.html"
+    path.write_text(IFRAME_AND_SHADOW)
+    page.goto(path.as_uri())
+    page.wait_for_timeout(200)
+    candidates, _, _ = extract(page)
+    pay = next(c for c in candidates if c["name"] == "Pay now")
+    page_module.execute(page, pay, {"type": "click"}, settle_ms=50)
+    assert page.frames[pay["frame"]].evaluate("window.clicked") == "yes"
+
+
+def test_the_same_name_in_two_frames_is_not_ambiguous(page, tmp_path):
+    """Fingerprint plus frame is the identity; a cross-frame duplicate must not block acting."""
+    path = tmp_path / "dupes.html"
+    path.write_text(
+        "<html><body><button>Save</button>"
+        "<iframe srcdoc='<button>Save</button>'></iframe></body></html>"
+    )
+    page.goto(path.as_uri())
+    page.wait_for_timeout(200)
+    candidates, _, _ = extract(page)
+    saves = [c for c in candidates if c["name"] == "Save"]
+    assert len(saves) == 2 and saves[0]["frame"] != saves[1]["frame"]
+    page_module.execute(page, saves[1], {"type": "click"}, settle_ms=0)  # the one inside the iframe

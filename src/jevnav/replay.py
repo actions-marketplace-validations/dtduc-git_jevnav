@@ -88,6 +88,7 @@ def replay_step(
         return result
     chosen = recorded.get(choice)
     result["chosen_fp"] = chosen["fp"] if chosen else None
+    result["chosen_frame"] = chosen.get("frame", 0) if chosen else 0
     if chosen is None:
         result["verdict"] = ERROR
         result["reason"] = f"trace is inconsistent: choice {choice!r} is not in the candidate list"
@@ -138,7 +139,13 @@ def replay_trace(
             try:
                 action = action_for_replay(step["action"])
                 if action["type"] != "none" and result.get("chosen_fp"):
-                    page_module.execute_fp(page, result["chosen_fp"], action, settle_ms=settle_ms)
+                    page_module.execute_fp(
+                        page,
+                        result["chosen_fp"],
+                        action,
+                        frame_index=result.get("chosen_frame", 0),
+                        settle_ms=settle_ms,
+                    )
                 result["executed"] = True
             except Exception as error:
                 result["executed"] = False

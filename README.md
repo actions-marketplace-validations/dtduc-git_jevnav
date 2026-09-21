@@ -294,7 +294,7 @@ human can decide later blocks the renderer and the next call never returns
 set in advance — `dialog_policy("accept", match="delete")` — and records every
 dialog with the rule that fired, so the run stays auditable.
 
-### How it differs from the others
+### Which one to reach for
 
 | | Playwright (library) | chrome-devtools-mcp | jevnav |
 |---|---|---|---|
@@ -310,11 +310,15 @@ dialog with the rule that fired, so the run stays auditable.
 | key combos | ✅ | ✅ `press_key` | ✅ `press_key` |
 | per-step cost | 0 | one LLM turn per step (~38k chars of snapshot) | **$0.00004** |
 
-jevnav is not a replacement for either: it is the acting + evidence layer an
-agent calls by intent. Playwright is the library you write test suites with
-(jevnav is built on it), chrome-devtools is what you reach for to debug a page.
-What jevnav adds is the part both lack: a decision that can be reviewed before
-it runs, and a run that can be replayed after the site changes.
+This is not a replacement argument: the three do different jobs, and running
+more than one costs a line of config (jevnav's browser starts in ~20ms and is
+lazy, so a second server is close to free). Playwright is the library you write
+a test suite with — jevnav is built on it. chrome-devtools is what you reach for
+to debug a page: screenshots, console, network, performance, all the raw detail
+in the model's context, which is exactly right for debugging and exactly wrong
+for driving. jevnav is the decision + evidence layer: an intent in, a gated
+action out, a trace that replays offline. Reach for it when the same flow has to
+keep working, and for chrome-devtools when you need to find out why it stopped.
 
 ### When the gate says `review`
 
@@ -454,8 +458,14 @@ Interactive versions of both sequences: `docs/seq-chrome-devtools.html`,
 
 ## Benchmarks
 
-`benchmarks/mcp-compare.py` measures jevnav and chrome-devtools-mcp on the same
-task (open Hacker News' Newest page), same machine:
+Two numbers matter here, and only one of them is a comparison.
+
+**Deterministic, and the one to hold jevnav to:** `replay` is offline, needs no
+API key, and exits 1 when a recorded decision no longer resolves. There is no
+sampling error in that; run it on your own traces.
+
+**Tool-level, and weaker by nature** — `benchmarks/mcp-compare.py`, same machine,
+one task, against chrome-devtools-mcp:
 
 | | jevnav | chrome-devtools-mcp |
 |---|---|---|
@@ -465,12 +475,15 @@ task (open Hacker News' Newest page), same machine:
 | decision cost (real / modelled) | **$0.0008** | $0.057 |
 | outcome verified against the page | **yes** (`--success` selector) | no such notion |
 
-With the *same* LLM (deepseek-v4.1-flash via opencode) doing the same tasks,
-once per server: HN Newest took **18.0s / 2 calls** with jevnav and 23.5s / 4
-calls with chrome-devtools; a Wikipedia search took **18.1s / 2 calls** and
-worked, while the chrome-devtools run burned 14 calls in 83s and got HTTP 403
-from Wikipedia's robot policy. Small samples, one model — run it yourself with
-`uv run --with mcp python benchmarks/mcp-compare.py`.
+An earlier run with the same LLM (deepseek-v4.1-flash via opencode) is on
+record in the git history, but do not lean on it: n=1 per server, one model, two
+tasks, and the loudest number (a Wikipedia search where chrome-devtools took 83s
+and hit HTTP 403) is a robot-policy artifact, not an architectural difference.
+The honest version is the table above — what the caller pays per step and how
+much of the page lands in the model's context — and even that says nothing about
+how the two behave across many sites. What jevnav claims is narrower and provable
+on your own pages: a decision at or above the gate is safe to run, and the run
+replays.
 
 ## Measured
 

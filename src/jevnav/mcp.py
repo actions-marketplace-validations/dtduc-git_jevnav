@@ -378,7 +378,9 @@ class Session:
                         raise RuntimeError("no file input matched the intent")
                 else:
                     chosen = files[0]
-                locator = page_module.locator_by_fp(page, chosen["fp"])
+                locator = page_module.locator_by_fp(
+                    page, chosen["fp"], frame_index=chosen.get("frame", 0)
+                )
             locator.set_input_files(paths)
             return locator.get_attribute("aria-label") or "file input"
 
@@ -772,7 +774,11 @@ class Session:
             "confidence": decision.get("confidence"),
             "model": decision.get("model"),
             "reason": reason,
-            "target": {"name": decision.get("chosen_name"), "selector": selector},
+            "target": {
+                "name": decision.get("chosen_name"),
+                "selector": selector,
+                "frame": (chosen or {}).get("frame", 0),
+            },
         }
         if gate != AUTO:
             from .agent import alternatives as ranked_alternatives
@@ -845,7 +851,13 @@ class Session:
             "listed": len(candidates),
             "dropped": dropped,
             "candidates": [
-                {"name": c["name"], "role": c["role"], "scope": c["scope"]} for c in candidates[:30]
+                {
+                    "name": c["name"],
+                    "role": c["role"],
+                    "scope": c["scope"],
+                    **({"frame": c["frame"]} if c.get("frame") else {}),
+                }
+                for c in candidates[:30]
             ],
             "candidates_shown": min(30, len(candidates)),
         }

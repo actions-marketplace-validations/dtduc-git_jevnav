@@ -45,7 +45,7 @@ complete or broken, never half-read).
 
 | field | type | meaning |
 |---|---|---|
-| `cid` | string | `c1`…, unique within the step; the choice question's option keys |
+| `cid` | string | `f0:c1`…, frame-namespaced and unique within the step; the choice question's option keys |
 | `role` | string | explicit or implicit ARIA role |
 | `name` | string | accessible name, original casing, whitespace collapsed |
 | `fp` | string | **fingerprint**: `role\|name` casefolded — the element's identity |
@@ -53,6 +53,7 @@ complete or broken, never half-read).
 | `href`, `placeholder` | string \| null | truncated to 120 / 60 chars |
 | `scope` | string \| null | nearest legend, form name or heading (max 60 chars) |
 | `disabled`, `in_viewport` | bool | |
+| `frame` | int | which frame the element lives in (0 is the main frame) |
 
 **How a candidate is described to the model** (option text):
 `Name — role → href`, plus `in 'scope'` only when another candidate on the page
@@ -67,7 +68,12 @@ names.
 `candidates` is a **shortlist**, not every element on the page. Ordering is
 deterministic: in-viewport first, then form controls (textbox, searchbox,
 combobox, checkbox, radio, switch), then buttons/tabs/menuitems, then links,
-then DOM order. The list is capped at `--max-candidates` (default 120; the API's
+then DOM order. Every frame is read (main frame first) and open shadow roots are pierced: a
+control inside a payment iframe or a web component is a candidate like any
+other. Cids are frame-namespaced (`f1:c7`), the stamps in the DOM carry the same
+name, and acting resolves by fingerprint **within that frame**.
+
+The list is capped at `--max-candidates` (default 120; the API's
 hard cap is 254 because `none` takes one of 255 choices) and `dropped` records
 how many were left out (truncation is a warning by default, `truncated: review`
 to gate on it).

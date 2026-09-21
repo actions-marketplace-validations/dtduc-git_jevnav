@@ -38,6 +38,7 @@ PLAYWRIGHT_ROLES = {
 CANDIDATE_JS = r"""
 (args) => {
   const LIMIT = args.limit;
+  const PREFIX = args.prefix || 'f0';
   const SEL = [
     'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea',
     '[contenteditable="true"]',
@@ -150,9 +151,17 @@ CANDIDATE_JS = r"""
   // on a cold decision and 3.8x fewer input tokens.
   const ROLE_RANK = { textbox: 0, searchbox: 0, combobox: 0, spinbutton: 0, checkbox: 0, radio: 0,
                       switch: 0, button: 1, tab: 1, menuitem: 1, link: 2 };
+  // walk the light DOM and every open shadow root: design systems put controls there
+  const collect = (rootNode, out) => {
+    for (const el of rootNode.querySelectorAll(SEL)) out.push(el);
+    for (const el of rootNode.querySelectorAll('*')) {
+      if (el.shadowRoot) collect(el.shadowRoot, out);
+    }
+    return out;
+  };
   const all = [];
   let seen = 0;
-  for (const el of document.querySelectorAll(SEL)) {
+  for (const el of collect(document, [])) {
     if (++seen > 2000) break;
     if (el.closest('[aria-hidden="true"]')) continue;
     const tag = el.tagName.toLowerCase();
@@ -194,12 +203,12 @@ CANDIDATE_JS = r"""
   // clear every stamp first: an element that fell out of the shortlist used to
   // keep its old cid, so a later .first() could match it and act on the wrong node
   for (const el of document.querySelectorAll('[data-jevcid]')) el.removeAttribute('data-jevcid');
-  kept.forEach((c, i) => c.el.setAttribute('data-jevcid', 'c' + (i + 1)));
+  kept.forEach((c, i) => c.el.setAttribute('data-jevcid', PREFIX + ':c' + (i + 1)));
   return {
     total,
     dropped: Math.max(0, total - kept.length),
     candidates: kept.map((c, i) => ({
-      cid: 'c' + (i + 1), role: c.role, name: c.name, tag: c.tag, type: c.type,
+      cid: PREFIX + ':c' + (i + 1), role: c.role, name: c.name, tag: c.tag, type: c.type,
       href: c.href, placeholder: c.placeholder, scope: c.scope, value: c.value,
       disabled: c.disabled, in_viewport: c.in_viewport,
     })),
@@ -211,32 +220,54 @@ CANDIDATE_JS = r"""
 DEFAULT_MAX_CANDIDATES = 120
 
 
+def candidate_key(candidate: dict[str, Any]) -> str:
+    """The key to look a candidate up by: fingerprint, then which frame it lives in."""
+    return f"{candidate.get('frame', 0)}|{candidate['fp']}"
+
+
 def extract(page: Any, limit: int | None = None) -> tuple[list[dict[str, Any]], int, int]:
     """Return (candidates, total_on_page, dropped) for the current page state.
+
+    Every frame is read, main frame first, and open shadow roots are pierced
+    (payment widgets and design systems live there). Cids are namespaced per
+    frame (``f0:c3``, ``f1:c7``) so a cid means one element, on one frame.
 
     The list is a shortlist, not the page: in-viewport and form controls first,
     capped at ``limit`` (default 120, the API's hard cap is 254 because ``none``
     takes one of the 255 choices). ``page --max-candidates`` tunes the trade
     between decision speed/cost and coverage.
     """
-    raw = page.evaluate(CANDIDATE_JS, {"limit": limit or DEFAULT_MAX_CANDIDATES})
-    candidates = [
-        make_candidate(
-            c["cid"],
-            c["role"],
-            c["name"],
-            tag=c["tag"],
-            type=c["type"],
-            href=c["href"],
-            placeholder=c["placeholder"],
-            scope=c["scope"],
-            value=c["value"],
-            disabled=c["disabled"],
-            in_viewport=c["in_viewport"],
-        )
-        for c in raw["candidates"]
-    ]
-    return candidates, raw["total"], raw["dropped"]
+    per_frame_limit = limit or DEFAULT_MAX_CANDIDATES
+    candidates: list[dict[str, Any]] = []
+    total = 0
+    dropped = 0
+    for frame_index, frame in enumerate(page.frames):
+        try:
+            raw = frame.evaluate(
+                CANDIDATE_JS, {"limit": per_frame_limit, "prefix": f"f{frame_index}"}
+            )
+        except Exception:  # detached, sandboxed or otherwise unreachable frame
+            continue
+        total += raw["total"]
+        dropped += raw["dropped"]
+        for item in raw["candidates"]:
+            candidates.append(
+                make_candidate(
+                    item["cid"],
+                    item["role"],
+                    item["name"],
+                    tag=item["tag"],
+                    type=item["type"],
+                    href=item["href"],
+                    placeholder=item["placeholder"],
+                    scope=item["scope"],
+                    value=item["value"],
+                    disabled=item["disabled"],
+                    in_viewport=item["in_viewport"],
+                    frame=frame_index,
+                )
+            )
+    return candidates, total, dropped
 
 
 def by_cid(candidates: list[dict[str, Any]], cid: str) -> dict[str, Any] | None:
@@ -266,22 +297,32 @@ def locator_for(page: Any, candidate: dict[str, Any]) -> tuple[str, bool]:
     return selector, count == 1
 
 
-def locator_by_fp(page: Any, fp: str, *, timeout_ms: int = 10_000) -> Any:
-    """The single element with this fingerprint right now, or a loud failure.
+def frame_of(page: Any, frame_index: int) -> Any:
+    """The Playwright frame behind an index; the main frame when it is gone."""
+    try:
+        return page.frames[frame_index]
+    except IndexError:
+        return page.main_frame
+
+
+def locator_by_fp(page: Any, fp: str, *, frame_index: int = 0, timeout_ms: int = 10_000) -> Any:
+    """The single element with this fingerprint in this frame, or a loud failure.
 
     Identity is the fingerprint everywhere else (decisions, traces, replay), so
     acting must use it too: a position-based lookup can silently point at an
-    element that only *used* to be the chosen one.
+    element that only *used to* be the chosen one.
     """
     candidates, _, _ = extract(page)
-    matches = [c for c in candidates if c["fp"] == fp]
+    matches = [c for c in candidates if c["fp"] == fp and c.get("frame", 0) == frame_index]
     if len(matches) != 1:
         raise RuntimeError(
-            f"cannot act: {len(matches)} candidates match {fp!r} (expected exactly one)"
+            f"cannot act: {len(matches)} candidates match {fp!r} in frame {frame_index} "
+            "(expected exactly one)"
         )
-    locator = page.locator(f'[data-jevcid="{matches[0]["cid"]}"]')
+    frame = frame_of(page, frame_index)
+    locator = frame.locator(f'[data-jevcid="{matches[0]["cid"]}"]')
     if locator.count() != 1:
-        raise RuntimeError(f"cannot act: the stamp for {fp!r} is not unique on the page")
+        raise RuntimeError(f"cannot act: the stamp for {fp!r} is not unique in its frame")
     locator.wait_for(state="attached", timeout=timeout_ms)
     return locator
 
@@ -300,12 +341,16 @@ def execute(
     page: Any, candidate: dict[str, Any], action: dict[str, Any], *, settle_ms: int = 300
 ) -> None:
     """Perform an action on a candidate, resolved by fingerprint, then let the DOM settle."""
-    execute_fp(page, candidate["fp"], action, settle_ms=settle_ms)
+    execute_fp(
+        page, candidate["fp"], action, frame_index=candidate.get("frame", 0), settle_ms=settle_ms
+    )
 
 
-def execute_fp(page: Any, fp: str, action: dict[str, Any], *, settle_ms: int = 300) -> None:
+def execute_fp(
+    page: Any, fp: str, action: dict[str, Any], *, frame_index: int = 0, settle_ms: int = 300
+) -> None:
     """Execute an action against the element with this fingerprint, not this position."""
-    element = locator_by_fp(page, fp)
+    element = locator_by_fp(page, fp, frame_index=frame_index)
     kind = action.get("type", "click")
     if kind == "click":
         element.click()
