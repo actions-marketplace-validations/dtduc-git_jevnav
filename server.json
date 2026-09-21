@@ -1,10 +1,13 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.dtduc-git/jevnav",
-  "description": "Browser automation whose decisions you can replay, test and audit: Jev picks the element from a ranked shortlist, a gate blocks risky actions, and every run leaves a trace that replays offline in CI.",
+  "description": "Replayable browser automation: Jev picks the element, a gate blocks risky actions, every run traces.",
   "title": "jevnav",
   "websiteUrl": "https://github.com/dtduc-git/jevnav",
-  "repository": { "url": "https://github.com/dtduc-git/jevnav", "source": "github" },
+  "repository": {
+    "url": "https://github.com/dtduc-git/jevnav",
+    "source": "github"
+  },
   "version": "0.1.1",
   "packages": [
     {
@@ -13,8 +16,15 @@
       "identifier": "jevnav",
       "version": "0.1.1",
       "runtimeHint": "uvx",
-      "transport": { "type": "stdio" },
-      "packageArguments": [{ "type": "positional", "value": "mcp" }],
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
       "environmentVariables": [
         {
           "name": "TYPESAFE_API_KEY",
