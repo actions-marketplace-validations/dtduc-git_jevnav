@@ -35,11 +35,15 @@ from .page import by_cid, execute, extract, locator_for
 from .trace import TraceWriter
 
 TRACE_DIR_OPTION = "--jev-trace-dir"
-# Anchored on token boundaries: COMPASS_DIR, MONKEY_PATCH_DIR, KEYCHAIN_PATH,
-# PASSENGER_ROOT and AUTHOR_NAME are not secrets, and rewriting their values
-# would replay as another machine's value.
+# Token boundaries, plus a suffix branch for concatenated names (APIKEY,
+# AUTHTOKEN): a missed secret lands verbatim in a committed trace, which is
+# worse than a false positive. PASS and AUTH stay out of the suffix branch, or
+# BYPASS and OAUTH would match; COMPASS_DIR, KEYCHAIN_PATH, PASSENGER_ROOT and
+# AUTHOR_NAME stay unmatched.
 SECRET_ENV_NAME = re.compile(
-    r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)S?(?:$|_|\d)", re.IGNORECASE
+    r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)S?(?:$|_|\d)"
+    r"|(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS?)S?$",
+    re.IGNORECASE,
 )
 
 

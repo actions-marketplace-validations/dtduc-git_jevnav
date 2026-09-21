@@ -83,10 +83,35 @@ def test_an_env_literal_is_traced_by_name_with_a_warning(navigator, app_url, mon
 def test_the_secret_name_pattern_anchors_on_tokens():
     from jevnav.pytest_plugin import secret_env_name
 
-    assert secret_env_name(["ACME_API_TOKEN", "AWS_SECRET_KEY", "PASSWORD123"]) == "ACME_API_TOKEN"
-    assert secret_env_name(["PROJECT_DIR", "ZZZ_OLD_COPY"]) is None
-    assert secret_env_name(["COMPASS_DIR", "MONKEY_PATCH_DIR", "KEYCHAIN_PATH"]) is None
-    assert secret_env_name(["PASSENGER_ROOT", "AUTHOR_NAME", "BYPASS_CACHE"]) is None
+    caught = [
+        "ACME_API_TOKEN",
+        "AWS_SECRET_KEY",
+        "PASSWORD123",
+        "DB_PASSWORD",
+        "API_TOKEN",
+        "CLIENT_SECRET",
+        "SERVICE_CREDENTIALS",
+        "TOKEN",
+        "APIKEY",
+        "SECRETKEY",
+        "AUTHTOKEN",
+        "GITHUB_APIKEY",
+        "STRIPE_SECRETKEY",
+    ]
+    spared = [
+        "PROJECT_DIR",
+        "ZZZ_OLD_COPY",
+        "COMPASS_DIR",
+        "MONKEY_PATCH_DIR",
+        "KEYCHAIN_PATH",
+        "PASSENGER_ROOT",
+        "AUTHOR_NAME",
+        "BYPASS_CACHE",
+        "OAUTH_REDIRECT_URI",
+        "PATH",
+    ]
+    assert all(secret_env_name([name]) == name for name in caught), caught
+    assert all(secret_env_name([name]) is None for name in spared), spared
 
 
 def test_a_path_that_matches_an_env_value_stays_a_literal(navigator, app_url, monkeypatch):
