@@ -39,7 +39,7 @@ def offline_jev(monkeypatch, page):
     monkeypatch.setattr(cli, "_api_key", lambda: "test-key")
 
     @contextmanager
-    def session(headed=False, user_data_dir=None, cdp=None):
+    def session(headed=False, user_data_dir=None, cdp=None, dialog_policy="dismiss"):
         yield page
 
     monkeypatch.setattr(cli, "_session", session)

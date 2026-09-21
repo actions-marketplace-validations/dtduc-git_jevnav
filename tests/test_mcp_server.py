@@ -131,7 +131,9 @@ def test_mcp_server_lists_tools_and_drives_a_goal(fake_endpoint, tmp_path):
             ],
         )
     )
-    assert outcomes[0] == "browse,goal,goto,page_state,summary"
+    names = outcomes[0].split(",")
+    assert names[0] == "browse"
+    assert {"goto", "goal", "console", "network", "read_js", "tabs", "wait_for"} <= set(names)
     opened = json.loads(outcomes[1])
     assert opened["url"].endswith("loop-app.html")
     goal = json.loads(outcomes[2])

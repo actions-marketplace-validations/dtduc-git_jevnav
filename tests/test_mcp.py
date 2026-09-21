@@ -172,7 +172,25 @@ def test_tools_are_registered(monkeypatch):
     monkeypatch.setattr(mcp_module, "Session", FakeSession)
     assert mcp_module.serve(start=None, trace=None, gates=None) == 0
     assert captured["name"] == "jevnav"
-    assert captured["tools"] == ["browse", "goto", "goal", "page_state", "summary"]
+    assert sorted(captured["tools"]) == sorted(
+        [
+            "browse",
+            "close_page",
+            "console",
+            "dialogs",
+            "goal",
+            "goto",
+            "network",
+            "new_page",
+            "page_state",
+            "read_js",
+            "scroll",
+            "select_page",
+            "summary",
+            "tabs",
+            "wait_for",
+        ]
+    )
     assert captured["ran"] is True
 
 
