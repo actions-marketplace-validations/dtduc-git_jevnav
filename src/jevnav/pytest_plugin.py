@@ -35,7 +35,17 @@ from .page import by_cid, execute, extract, locator_for
 from .trace import TraceWriter
 
 TRACE_DIR_OPTION = "--jev-trace-dir"
-SECRET_ENV_NAME = re.compile(r"TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL|AUTH", re.IGNORECASE)
+# Anchored on token boundaries: COMPASS_DIR, MONKEY_PATCH_DIR, KEYCHAIN_PATH,
+# PASSENGER_ROOT and AUTHOR_NAME are not secrets, and rewriting their values
+# would replay as another machine's value.
+SECRET_ENV_NAME = re.compile(
+    r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|CREDENTIALS?|AUTH)S?(?:$|_|\d)", re.IGNORECASE
+)
+
+
+def secret_env_name(names: list[str]) -> str | None:
+    """The first variable name that looks like a secret."""
+    return next((name for name in names if SECRET_ENV_NAME.search(name)), None)
 
 
 def env_names_for_value(value: str, *, min_length: int = 8) -> list[str]:
@@ -138,7 +148,7 @@ class JevNavigator:
             payload["value"] = resolved
             if env_name is None:
                 matches = env_names_for_value(resolved)
-                secret = next((n for n in matches if SECRET_ENV_NAME.search(n)), None)
+                secret = secret_env_name(matches)
                 if secret:
                     env_name = secret
                     warnings.warn(

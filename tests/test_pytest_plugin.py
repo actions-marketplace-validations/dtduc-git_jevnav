@@ -80,6 +80,15 @@ def test_an_env_literal_is_traced_by_name_with_a_warning(navigator, app_url, mon
     assert steps[0]["action"] == {"type": "fill", "value_from_env": "DEMO_PASSWORD"}
 
 
+def test_the_secret_name_pattern_anchors_on_tokens():
+    from jevnav.pytest_plugin import secret_env_name
+
+    assert secret_env_name(["ACME_API_TOKEN", "AWS_SECRET_KEY", "PASSWORD123"]) == "ACME_API_TOKEN"
+    assert secret_env_name(["PROJECT_DIR", "ZZZ_OLD_COPY"]) is None
+    assert secret_env_name(["COMPASS_DIR", "MONKEY_PATCH_DIR", "KEYCHAIN_PATH"]) is None
+    assert secret_env_name(["PASSENGER_ROOT", "AUTHOR_NAME", "BYPASS_CACHE"]) is None
+
+
 def test_a_path_that_matches_an_env_value_stays_a_literal(navigator, app_url, monkeypatch):
     """$PWD is not a secret; rewriting it would replay as another machine's path."""
     monkeypatch.setenv("PROJECT_DIR", "/Users/demo/work/acme-console")
