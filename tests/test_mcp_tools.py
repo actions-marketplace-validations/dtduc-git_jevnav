@@ -398,3 +398,16 @@ def test_no_eval_closes_the_read_js_channel(page, tmp_path):
     with pytest.raises(RuntimeError, match="no-eval"):
         session.read_js("document.title")
     session.close()
+
+
+def test_fill_form_by_intent_hands_back_a_stable_selector(page, tmp_path):
+    """The selector a caller may reuse later must not be a position-based cid."""
+    session = make_session(page, tmp_path)
+    session.client = FakeJev({"work email": "work email"}).client()
+    page.set_content("<label for=w>Work email</label><input id=w>")
+    out = session.fill_form([{"intent": "type the work email", "value": "a@b.c"}])
+    selector = out["filled"][0]["selector"]
+    assert selector == 'role=textbox[name="Work email"]'
+    assert "data-jevcid" not in selector
+    assert page.input_value("#w") == "a@b.c"
+    session.close()

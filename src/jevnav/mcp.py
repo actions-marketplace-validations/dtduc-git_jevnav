@@ -451,7 +451,10 @@ class Session:
             chosen = next((c for c in pool if c["cid"] == choice), None)
             if chosen is None:
                 raise RuntimeError(f"no element matched {intent!r}")
-            return f'[data-jevcid="{chosen["cid"]}"]'
+            selector, unique = page_module.locator_for(page, chosen)
+            if not unique:
+                raise RuntimeError(f"{intent!r} resolved to {chosen['name']!r}, which is ambiguous")
+            return selector
 
         return self.on_page(choose)
 
