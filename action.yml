@@ -53,7 +53,7 @@ runs:
           run_jevnav() { uvx "jevnav@$VERSION" "$@"; }
           run_python() { uvx --from "jevnav==$VERSION" python "$@"; }
         fi
-        run_python -m playwright install --with-deps chromium
+        run_python -m playwright install --with-deps chromium-headless-shell
         args=(replay "$TRACE")
         if [ -n "$REPORT" ]; then args+=(--report "$REPORT"); fi
         if [ "$EXECUTE" = "true" ]; then args+=(--execute); fi
