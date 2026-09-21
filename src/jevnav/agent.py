@@ -224,7 +224,11 @@ def run_goal(
             intent=goal,
             candidate=chosen,
             dropped=dropped,
-            gates=gates,
+            # Real pages exceed the candidate cap routinely, so the loop records
+            # truncation (and its `dropped` count) but does not gate on it; a
+            # hidden element that mattered shows up as `stuck` or as a failed
+            # --success check, not as a false green.
+            gates={**gates, "truncated": None},
             default_key="loop_min_confidence",
         )
         if gate != AUTO and decision.get("choice") in (None, "none"):
@@ -251,6 +255,16 @@ def run_goal(
         status = decision.get("status") or "error"
         if status == "done":
             reason = f"model says the goal is achieved (p={decision.get('status_confidence')})"
+            verified = None
+            if success:
+                try:
+                    verified = page.locator(success).first.is_visible()
+                except Exception:
+                    verified = False
+                if not verified:
+                    status = "unverified"
+                    reason = f"the model says done but {success!r} is not visible on the page"
+            record["verify"] = {"selector": success, "verified": verified}
             record["gate"] = {"verdict": "n/a", "reason": "goal achieved, no action needed"}
             records.append(writer.step(**record))
             finished = True
@@ -322,17 +336,8 @@ def run_goal(
             break
     if not finished and status != "max_steps":
         status, reason = "max_steps", f"{max_steps} steps without reaching the goal"
-    verified = None
-    if success:
-        try:
-            verified = page.locator(success).first.is_visible()
-        except Exception:
-            verified = False
-        if status == "done" and not verified:
-            status = "unverified"
-            reason = f"the model says done but {success!r} is not visible on the page"
-    elif status == "done":
-        verified = None
+    verified = (records[-1].get("verify") or {}).get("verified") if records else None
+    if status == "done" and not success:
         reason = (reason or "") + " — pass --success <selector> to verify the outcome"
     return {
         "goal": goal,

@@ -186,6 +186,36 @@ def test_a_portable_trace_replays_without_flags(tmp_path, page):
     assert result["results"][0]["page_identical"] is True
 
 
+def test_replay_verifies_a_step_level_verify_block(tmp_path, page):
+    """MCP sessions record the success selector on the step, not in the header."""
+    from helpers import fixture_url
+
+    from jevnav.agent import run_goal
+    from jevnav.gates import default_gates
+
+    url = fixture_url("loop-app.html")
+    path = tmp_path / "mcp.trace.jsonl"
+    with TraceWriter(path, flow="mcp-session") as writer:
+        run_goal(
+            "sign in",
+            page=page,
+            client=FakeJev(
+                script=[
+                    {"action": "fill", "target": "Email", "value_key": "email"},
+                    {"action": "click", "target": "Sign in"},
+                ]
+            ).client(),
+            gates=default_gates(),
+            writer=writer,
+            context={"email": "demo@example.com"},
+            start=url,
+            success="#signed-in-as",
+        )
+    result = replay_trace(path, page=page, execute=True, settle_ms=0)
+    assert result["success"] == {"selector": "#signed-in-as", "verified": True}
+    assert result["failed"] == []
+
+
 def test_replay_verifies_a_recorded_success_selector(tmp_path, page):
     from helpers import FakeJev, fixture_url
 

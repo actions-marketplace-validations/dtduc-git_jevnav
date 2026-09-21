@@ -88,6 +88,22 @@ def test_session_trace_is_replayable(session, tmp_path):
     assert result["failed"] == []
 
 
+def test_a_second_session_archives_the_previous_trace(app_url, tmp_path):
+    from jevnav.mcp import Session
+
+    trace = tmp_path / "session.trace.jsonl"
+    trace.write_text('{"kind": "run"}\n{"kind": "step", "step": 1}\n')
+    instance = Session(start=app_url, trace=str(trace), page=None, client=FakeJev({}).client())
+    try:
+        assert trace.exists()
+        assert len(trace.read_text().splitlines()) == 1  # the fresh header only
+        archived = list(tmp_path.glob("session.trace.*.jsonl"))
+        assert len(archived) == 1
+        assert "kind" in archived[0].read_text()
+    finally:
+        instance.close()
+
+
 def test_browse_rejects_unknown_actions(session):
     out = session.browse("Sign in", "teleport", None)
     assert out["status"] == "error"

@@ -60,8 +60,13 @@ def test_candidate_list_is_capped_and_reports_what_was_dropped(page, tmp_path):
     page.goto(path.as_uri())
     candidates, total, dropped = extract(page)
     assert total == 300
-    assert len(candidates) == 255
-    assert dropped == 45
+    assert len(candidates) == 254
+    assert dropped == 46
+    # the API allows 255 choices per question, and "none" takes one
+    from jevnav.decide import build_question
+
+    question = build_question("file:///x", "many", "press one", candidates)
+    assert len(question["criteria"]) == 255
 
 
 def test_locator_for_returns_a_standard_playwright_locator(page, app_url):

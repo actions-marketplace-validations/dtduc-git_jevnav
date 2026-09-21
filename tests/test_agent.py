@@ -127,6 +127,19 @@ def test_max_steps_is_respected(tmp_path, page, loop_url):
     assert len(result["steps"]) == 1
 
 
+def test_the_done_step_records_the_verification_in_the_trace(tmp_path, page, loop_url):
+    page.goto(loop_url)
+    _, trace_path = run(page, tmp_path, SIGN_IN, loop_url, success="#signed-in-as")
+    _, steps = read_trace(trace_path)
+    assert steps[-1]["verify"] == {"selector": "#signed-in-as", "verified": True}
+
+    page.goto(loop_url)
+    _, failed_path = run(page, tmp_path, [], loop_url, context={}, success="#signed-in-as")
+    _, failed_steps = read_trace(failed_path)
+    assert failed_steps[-1]["verify"] == {"selector": "#signed-in-as", "verified": False}
+    assert failed_steps[-1]["decision"]["status"] == "done"
+
+
 def test_done_without_a_success_selector_is_reported_as_unverified(tmp_path, page, loop_url):
     page.goto(loop_url)
     result, _ = run(page, tmp_path, [], loop_url, context={})
@@ -213,6 +226,21 @@ def test_dry_run_decides_without_acting(tmp_path, page, loop_url):
     result, _ = run(page, tmp_path, SIGN_IN, loop_url, dry_run=True)
     assert all(step["result"]["executed"] is False for step in result["steps"])
     assert page.input_value("#login-email") == ""
+
+
+def test_the_loop_records_truncation_instead_of_stopping(tmp_path, page, loop_url):
+    page.goto("about:blank")
+    page.set_content(
+        "<html><body>"
+        + "".join(f"<button>Button {i}</button>" for i in range(300))
+        + '<input id="target" aria-label="Email"></body></html>'
+    )
+    result, trace_path = run(page, tmp_path, [], None, context={})  # no start: keep set_content
+    step = result["steps"][0]
+    assert step["dropped"] > 0
+    assert step["gate"]["verdict"] == "n/a"  # still reached the model, and it said done
+    _, steps = read_trace(trace_path)
+    assert steps[0]["dropped"] == step["dropped"]
 
 
 def test_the_state_carries_the_goal_page_text_and_history(page, loop_url):

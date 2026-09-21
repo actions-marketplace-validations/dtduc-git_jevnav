@@ -143,6 +143,12 @@ Step records in a loop trace use the same shape as a flow trace, plus:
 | `decision.value_key` | the context key it chose, if any |
 | `value_source` | `model` (it picked the key) or `name-match` (the field name matched a key) |
 | `gate.verdict` | as in a flow, plus `n/a` for the step that stopped the loop (`done`) |
+| `verify` | on the step where the model said `done`: `{selector, verified}` — the claim checked against the page, recorded whether it passed, failed or was not attempted (`null`) |
+
+The `run` header of a `jevnav go` trace also carries `goal` and `success`.
+`replay --execute` verifies whichever of the two it finds: the header's
+`success`, or the last step's `verify.selector` (MCP sessions have per-goal
+verification in the step, since one session may run several goals).
 
 Loop rules, all deterministic:
 
@@ -157,6 +163,10 @@ Loop rules, all deterministic:
 - The loop's gate uses `loop_min_confidence` (default 0.5), not
   `min_confidence`: loop decisions carry a lower calibrated p by construction
   (measured: correct decisions at p 0.41–0.99, wrong at 0.39–0.47).
+- Candidate lists are capped at **254** (255 choices minus the `none` option),
+  in-viewport first, and the step records how many were dropped. A scripted
+  flow sends a truncated list to review; the loop does not gate on it (real
+  pages exceed the cap routinely) and relies on `--success` instead.
 
 `replay --execute` re-runs a loop trace and re-checks the recorded `success`
 selector, so an agent run becomes a deterministic CI test.

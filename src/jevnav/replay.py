@@ -125,8 +125,16 @@ def replay_trace(
         results.append(result)
     counts = Counter(r["verdict"] for r in results)
     success: dict[str, Any] | None = None
-    if run.get("success"):
-        selector = run["success"]
+    recorded_success = run.get("success") or next(
+        (
+            step["verify"]["selector"]
+            for step in reversed(steps)
+            if step.get("verify", {}).get("selector")
+        ),
+        None,
+    )
+    if recorded_success:
+        selector = recorded_success
         if execute:
             try:
                 verified = page.locator(selector).first.is_visible()

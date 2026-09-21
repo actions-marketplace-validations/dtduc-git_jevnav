@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -89,6 +91,21 @@ class BrowserThread:
         self._thread.join(timeout=10)
 
 
+def archive_existing_trace(trace: str | Path) -> Path | None:
+    """Move a previous session's trace aside so evidence is never overwritten.
+
+    The configured path always holds the latest session; older ones stay next
+    to it as ``name.<UTC stamp>.jsonl``.
+    """
+    path = Path(trace)
+    if not path.exists() or not path.stat().st_size:
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    archived = path.with_name(f"{path.stem}.{stamp}{path.suffix}")
+    path.rename(archived)
+    return archived
+
+
 class Session:
     """One browser, one client, one trace — shared by every MCP tool call."""
 
@@ -113,11 +130,12 @@ class Session:
         if page is None:
             self.browser = BrowserThread(headed=headed)
             self.page = self.on_page(lambda browser_page: browser_page)
-        self.writer = (
-            TraceWriter(trace, flow="mcp-session", model=model, tool=f"jevnav/{__version__}")
-            if trace
-            else None
-        )
+        self.writer = None
+        if trace:
+            archive_existing_trace(trace)
+            self.writer = TraceWriter(
+                trace, flow="mcp-session", model=model, tool=f"jevnav/{__version__}"
+            )
         self.steps: list[dict[str, Any]] = []
         if start:
             self.on_page(lambda page: page.goto(start, wait_until="domcontentloaded"))

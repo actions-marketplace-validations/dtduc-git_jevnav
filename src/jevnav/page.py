@@ -1,8 +1,9 @@
 """The page side: candidate extraction, locators and action execution.
 
 The model only ever sees the candidate list produced here, so extraction is
-the accuracy ceiling of the whole tool. Names are computed with the accessible
-name rules that matter in practice (aria-label, aria-labelledby, native
+the accuracy ceiling of the whole tool. The list is capped at 254 (the choice
+limit is 255 and "none" takes one slot), in-viewport elements first. Names are
+computed with the accessible name rules that matter in practice (aria-label, aria-labelledby, native
 labels, value/placeholder fallbacks); every candidate carries a scope (nearest
 legend/heading) so identical labels stay distinguishable.
 """
@@ -135,6 +136,9 @@ CANDIDATE_JS = r"""
     return null;
   };
 
+  // The API allows 255 choices per question and "none" is always an option,
+  // so at most 254 candidates can be offered.
+  const MAX_CANDIDATES = 254;
   const all = [];
   let seen = 0;
   for (const el of document.querySelectorAll(SEL)) {
@@ -165,7 +169,7 @@ CANDIDATE_JS = r"""
   }
   const total = all.length;
   all.sort((a, b) => Number(b.in_viewport) - Number(a.in_viewport));
-  const kept = all.slice(0, 255);
+  const kept = all.slice(0, MAX_CANDIDATES);
   kept.forEach((c, i) => c.el.setAttribute('data-jevcid', 'c' + (i + 1)));
   return {
     total,
