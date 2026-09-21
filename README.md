@@ -5,8 +5,8 @@
 **Browser automation whose decisions you can replay, test and audit.**
 
 [![CI](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml/badge.svg)](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/jevnav.svg)](https://pypi.org/project/jevnav/)
-[![Python](https://img.shields.io/pypi/pyversions/jevnav.svg)](https://pypi.org/project/jevnav/)
+[![PyPI](https://img.shields.io/pypi/v/jevnav?logo=pypi&label=pypi)](https://pypi.org/project/jevnav/)
+[![Python](https://img.shields.io/pypi/pyversions/jevnav?logo=python&label=python)](https://pypi.org/project/jevnav/)
 [![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.dtduc--git%2Fjevnav-6E56CF)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.dtduc-git/jevnav)
 [![Marketplace](https://img.shields.io/badge/Marketplace-jevnav%20replay-2EA44F?logo=github)](https://github.com/marketplace/actions/jevnav-replay)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
