@@ -47,6 +47,24 @@ def test_browse_never_executes_a_risky_decision(session):
     assert session.steps[0]["result"]["executed"] is False
 
 
+def test_browse_can_use_the_callers_own_confidence_bar(session):
+    from helpers import fixture_url
+
+    session.page.goto(fixture_url("loop-app.html"))
+    session.client = FakeJev({"Sign in": ("sign in", 0.72)}).client()
+    refused = session.browse("Sign in to the account", "click", None)
+    assert refused["status"] == "review"
+    allowed = session.browse("Sign in to the account", "click", None, min_confidence=0.7)
+    assert allowed["status"] == "auto"
+
+
+def test_browse_returns_alternatives_when_it_wants_a_human(session):
+    out = session.browse("Delete the task about shipping release notes", "click", None)
+    assert out["status"] == "review"
+    assert out["alternatives"]
+    assert "browse again" in out["hint"]
+
+
 def test_browse_reports_a_blocked_decision(session):
     out = session.browse("Permanently delete the whole account and all of its data", "click", None)
     assert out["status"] == "blocked"

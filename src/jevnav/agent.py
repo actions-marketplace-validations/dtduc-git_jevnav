@@ -138,6 +138,28 @@ def build_questions(
     return questions
 
 
+def alternatives(
+    candidates: list[dict[str, Any]], decision: dict[str, Any], limit: int = 3
+) -> list[dict[str, Any]]:
+    """The runners-up, so a caller can resolve a review without guessing.
+
+    Surfaced when the gate wants a human: a more specific `browse` intent scores
+    much higher on the same page (measured on Wikipedia: p 0.44 -> 0.93).
+    """
+    probabilities = decision.get("probabilities") or {}
+    ranked = [
+        {
+            "name": candidate["name"],
+            "role": candidate["role"],
+            "confidence": round(probabilities.get(candidate["cid"], 0.0), 3),
+        }
+        for candidate in candidates
+        if candidate["cid"] != decision.get("choice") and probabilities.get(candidate["cid"])
+    ]
+    ranked.sort(key=lambda item: item["confidence"], reverse=True)
+    return ranked[:limit]
+
+
 def resolve_value_key(
     answer_key: str | None, target_name: str | None, context: dict[str, str]
 ) -> tuple[str | None, str | None]:
@@ -163,6 +185,7 @@ def run_goal(
     start: str | None = None,
     success: str | None = None,
     max_steps: int = 8,
+    min_confidence: float | None = None,
     dry_run: bool = False,
     allow_risky: bool = False,
     settle_ms: int = 300,
@@ -219,17 +242,15 @@ def run_goal(
         else:
             decision["chosen_fp"] = None
             decision["chosen_name"] = None
+        decision["alternatives"] = alternatives(candidates, decision)
         gate, gate_reason = verdict(
             decision,
             intent=goal,
             candidate=chosen,
             dropped=dropped,
-            # Real pages exceed the candidate cap routinely, so the loop records
-            # truncation (and its `dropped` count) but does not gate on it; a
-            # hidden element that mattered shows up as `stuck` or as a failed
-            # --success check, not as a false green.
-            gates={**gates, "truncated": None},
+            gates=gates,
             default_key="loop_min_confidence",
+            min_confidence=min_confidence,
         )
         if gate != AUTO and decision.get("choice") in (None, "none"):
             gate, gate_reason = "blocked", gate_reason
@@ -372,6 +393,15 @@ def summarize_goal(result: dict[str, Any]) -> dict[str, Any]:
         "review": gates.count("review"),
         "blocked": gates.count("blocked"),
         "stopped": gates.count("n/a"),
+        "alternatives": (result["steps"][-1]["decision"].get("alternatives") or [])
+        if result["steps"] and result["status"] in {"review", "stuck"}
+        else [],
+        "hint": (
+            "Call browse again with a more specific intent (name the element and where it is); "
+            "specific intents score much higher than a broad goal."
+        )
+        if result["status"] in {"review", "stuck"}
+        else None,
         "cost_usd": round(sum(r["decision"].get("cost_usd") or 0 for r in result["steps"]), 6),
         "latency_p50_ms": sorted(latencies)[len(latencies) // 2] if latencies else None,
         "latency_p95_ms": sorted(latencies)[min(len(latencies) - 1, int(0.95 * len(latencies)))]

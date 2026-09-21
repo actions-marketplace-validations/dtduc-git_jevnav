@@ -38,6 +38,12 @@ def render_run_report(
         else "n/a"
     )
     lines.append(f"- cost: ${summary['cost_usd']:.6f} total · latency {latency}")
+    dropped = sum(record.get("dropped") or 0 for record in records)
+    if dropped:
+        lines.append(
+            f"- warning: {dropped} candidates were dropped (the page had more than 254; "
+            "set `truncated: review` to gate on it)"
+        )
     lines.append("")
     lines.append("## Steps")
     lines.append("")
@@ -132,6 +138,13 @@ def render_goal_report(
     lines.append(f"- status: {outcome}")
     if summary.get("reason"):
         lines.append(f"- reason: {summary['reason']}")
+    if summary.get("alternatives"):
+        lines.append(
+            "- alternatives: "
+            + ", ".join(
+                f"{a['name']} ({a['role']}, p={a['confidence']})" for a in summary["alternatives"]
+            )
+        )
     lines.append(f"- trace: `{trace_path}`")
     lines.append(
         f"- steps: {summary['steps']} — auto **{summary['auto']}**, review "
@@ -143,6 +156,12 @@ def render_goal_report(
         else "n/a"
     )
     lines.append(f"- cost: ${summary['cost_usd']:.6f} · latency {latency}")
+    dropped = sum(record.get("dropped") or 0 for record in records)
+    if dropped:
+        lines.append(
+            f"- warning: {dropped} candidates were dropped (the page had more than 254; "
+            "set `truncated: review` to gate on it)"
+        )
     lines.append("")
     lines.append("## Steps")
     lines.append("")

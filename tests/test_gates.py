@@ -86,8 +86,10 @@ def test_cancel_a_form_is_not_risky_but_cancel_a_subscription_is():
     assert risk_match("cancel my subscription", cancel, gates) is not None
 
 
-def test_truncated_candidate_list_is_review():
+def test_truncation_is_a_warning_by_default_and_a_gate_when_asked():
     gates = default_gates()
+    assert verdict(decision(), intent="save", candidate=BUTTON, dropped=12, gates=gates)[0] == AUTO
+    gates["truncated"] = "review"
     result, reason = verdict(decision(), intent="save", candidate=BUTTON, dropped=12, gates=gates)
     assert result == REVIEW
     assert "12 candidates" in reason
@@ -116,6 +118,31 @@ def test_loop_mode_uses_its_own_lower_threshold():
     )
 
 
+def test_an_explicit_confidence_beats_the_configured_one_but_not_risk():
+    gates = default_gates()
+    assert threshold_for("save", gates, override=0.7) == 0.7
+    assert (
+        verdict(
+            decision(confidence=0.75),
+            intent="save",
+            candidate=BUTTON,
+            dropped=0,
+            gates=gates,
+            min_confidence=0.7,
+        )[0]
+        == AUTO
+    )
+    risky = verdict(
+        decision(confidence=1.0),
+        intent="delete the account",
+        candidate=BUTTON,
+        dropped=0,
+        gates=gates,
+        min_confidence=0.1,
+    )
+    assert risky[0] == REVIEW
+
+
 def test_per_intent_override_wins_over_the_global_threshold():
     gates = default_gates()
     gates["intents"] = {"delete the *": {"min_confidence": 0.99}}
@@ -131,6 +158,13 @@ def test_per_intent_override_wins_over_the_global_threshold():
         )[0]
         == REVIEW
     )
+
+
+def test_load_gates_rejects_a_bad_truncated_value(tmp_path):
+    path = tmp_path / "gates.yaml"
+    path.write_text("truncated: maybe\n")
+    with pytest.raises(ValueError, match="truncated"):
+        load_gates(path)
 
 
 def test_load_gates_rejects_unknown_keys(tmp_path):

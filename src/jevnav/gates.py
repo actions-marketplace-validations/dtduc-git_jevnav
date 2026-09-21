@@ -39,6 +39,11 @@ DEFAULT_RISKY = [
     r"\b(rotate|reset|delete)\b.*\b(key|token|credential|secret|password)\b",
 ]
 
+# Real pages exceed the candidate cap routinely (Wikipedia's main page drops
+# ~10 links), so truncation is recorded as a warning by default. Set
+# `truncated: review` to gate on it anyway.
+DEFAULT_TRUNCATED = "warn"
+
 AUTO = "auto"
 REVIEW = "review"
 BLOCKED = "blocked"
@@ -49,7 +54,7 @@ def default_gates() -> dict[str, Any]:
         "min_confidence": DEFAULT_MIN_CONFIDENCE,
         "loop_min_confidence": DEFAULT_LOOP_MIN_CONFIDENCE,
         "risky": list(DEFAULT_RISKY),
-        "truncated": REVIEW,
+        "truncated": DEFAULT_TRUNCATED,
         "intents": {},
     }
 
@@ -69,13 +74,27 @@ def load_gates(path: str | Path | None) -> dict[str, Any]:
         raise ValueError(f"{path}: risky must be a list of regular expressions")
     if not isinstance(gates["intents"], dict):
         raise ValueError(f"{path}: intents must be a mapping of intent pattern -> overrides")
+    if gates["truncated"] not in {"warn", "review", None}:
+        raise ValueError(f"{path}: truncated must be 'warn' or 'review'")
     return gates
 
 
 def threshold_for(
-    intent: str, gates: dict[str, Any], *, default_key: str = "min_confidence"
+    intent: str,
+    gates: dict[str, Any],
+    *,
+    default_key: str = "min_confidence",
+    override: float | None = None,
 ) -> float:
-    """Per-intent override by fnmatch pattern; the most specific pattern wins."""
+    """The confidence bar: an explicit override, else per-intent, else the default.
+
+    ``override`` is the caller's own bar (``browse(min_confidence=...)``,
+    ``go --min-confidence``). Risky patterns and the deterministic checks are
+    never overridable — only the confidence question is delegated to whoever
+    knows the page best.
+    """
+    if override is not None:
+        return float(override)
     best: tuple[int, float] | None = None
     for pattern, overrides in gates.get("intents", {}).items():
         if fnmatch.fnmatch(intent.casefold(), pattern.casefold()):
@@ -110,6 +129,7 @@ def verdict(
     dropped: int,
     gates: dict[str, Any],
     default_key: str = "min_confidence",
+    min_confidence: float | None = None,
 ) -> tuple[str, str | None]:
     """Classify one recorded decision. Returns (verdict, reason)."""
     if decision.get("error"):
@@ -124,7 +144,7 @@ def verdict(
     risk = risk_match(intent, candidate, gates)
     if risk:
         return REVIEW, f"risky action matched {risk!r}"
-    threshold = threshold_for(intent, gates, default_key=default_key)
+    threshold = threshold_for(intent, gates, default_key=default_key, override=min_confidence)
     if confidence < threshold:
         return REVIEW, f"p={confidence:.2f} below threshold {threshold:.2f}"
     return AUTO, None

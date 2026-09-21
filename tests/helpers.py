@@ -61,13 +61,18 @@ class FakeJev:
         criteria: dict[str, str] = questions["target"]["criteria"]
         instructions = questions["target"]["instructions"]
         choice, confidence = self._answer(instructions, criteria)
+        return {"target": self._choice(choice, confidence, list(criteria))}
+
+    @staticmethod
+    def _choice(choice: str, confidence: float, cids: list[str]) -> dict[str, Any]:
+        """The winner plus a plausible remainder, the way the real endpoint answers."""
+        others = [cid for cid in cids if cid != choice]
+        share = round((1 - confidence) / len(others), 3) if others else 0.0
         return {
-            "target": {
-                "type": "choice",
-                "choice": choice,
-                "confidence": confidence,
-                "probabilities": {cid: (confidence if cid == choice else 0.0) for cid in criteria},
-            }
+            "type": "choice",
+            "choice": choice,
+            "confidence": confidence,
+            "probabilities": {cid: (confidence if cid == choice else share) for cid in cids},
         }
 
     def _loop_answers(self, questions: dict[str, Any]) -> dict[str, Any]:
@@ -79,21 +84,11 @@ class FakeJev:
             choice = step.get(qid, LOOP_DEFAULTS[qid])
             if qid == "value_key" and choice != "none":
                 assert choice in questions[qid]["criteria"], f"{choice!r} is not a context key"
-            answers[qid] = {
-                "type": "choice",
-                "choice": choice,
-                "confidence": self.confidence,
-                "probabilities": {choice: self.confidence},
-            }
+            answers[qid] = self._choice(choice, self.confidence, list(questions[qid]["criteria"]))
         criteria = questions["target"]["criteria"]
         target = step.get("target", "none")
         choice = "none" if target == "none" else self._find(criteria, target)
-        answers["target"] = {
-            "type": "choice",
-            "choice": choice,
-            "confidence": self.confidence,
-            "probabilities": {cid: (self.confidence if cid == choice else 0.0) for cid in criteria},
-        }
+        answers["target"] = self._choice(choice, self.confidence, list(criteria))
         return answers
 
     def _answer(self, instructions: str, criteria: dict[str, str]) -> tuple[str, float]:

@@ -153,10 +153,19 @@ class Session:
             return self.browser.call(function)
         return function(self.page)
 
-    def browse(self, intent: str, action: str, value: str | None) -> dict[str, Any]:
-        return self.on_page(lambda page: self._browse(page, intent, action, value))
+    def browse(
+        self, intent: str, action: str, value: str | None, min_confidence: float | None = None
+    ) -> dict[str, Any]:
+        return self.on_page(lambda page: self._browse(page, intent, action, value, min_confidence))
 
-    def _browse(self, page: Any, intent: str, action: str, value: str | None) -> dict[str, Any]:
+    def _browse(
+        self,
+        page: Any,
+        intent: str,
+        action: str,
+        value: str | None,
+        min_confidence: float | None = None,
+    ) -> dict[str, Any]:
         if action not in ACTION_TYPES:
             return {
                 "status": "error",
@@ -192,7 +201,12 @@ class Session:
                 decision = failed_decision(error)
         chosen = page_module.by_cid(candidates, decision.get("choice") or "")
         gate, reason = verdict(
-            decision, intent=intent, candidate=chosen, dropped=dropped, gates=self.gates
+            decision,
+            intent=intent,
+            candidate=chosen,
+            dropped=dropped,
+            gates=self.gates,
+            min_confidence=min_confidence,
         )
         selector = None
         if chosen is not None:
@@ -211,6 +225,14 @@ class Session:
             "reason": reason,
             "target": {"name": decision.get("chosen_name"), "selector": selector},
         }
+        if gate != AUTO:
+            from .agent import alternatives as ranked_alternatives
+
+            out["alternatives"] = ranked_alternatives(candidates, decision)
+            out["hint"] = (
+                "Call browse again with a more specific intent (name the element and where it is); "
+                "specific intents score much higher than a broad goal."
+            )
         if gate == AUTO:
             try:
                 page_module.execute(
@@ -312,14 +334,21 @@ def serve(
     mcp = server_class()("jevnav")
 
     @mcp.tool()
-    def browse(intent: str, action: str = "click", value: str | None = None) -> str:
+    def browse(
+        intent: str,
+        action: str = "click",
+        value: str | None = None,
+        min_confidence: float | None = None,
+    ) -> str:
         """Find the element matching an intent and, if the gate allows it, act on it.
 
         Returns the gate verdict (auto / review / blocked), the confidence, the
         target element and its Playwright selector. Only ``auto`` decisions are
-        executed; ``review`` means a human should confirm first.
+        executed. On large pages even precise intents score 0.8-0.95, so pass
+        ``min_confidence`` to set your own bar; risky patterns and the
+        deterministic checks still apply and cannot be overridden.
         """
-        return json.dumps(session.browse(intent, action, value), ensure_ascii=False)
+        return json.dumps(session.browse(intent, action, value, min_confidence), ensure_ascii=False)
 
     @mcp.tool()
     def goto(url: str) -> str:

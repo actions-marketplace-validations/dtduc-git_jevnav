@@ -113,7 +113,7 @@ unattended:
 | `min_confidence` | `0.9` | below this → `review` |
 | `risky` | built-in list | regular expressions matched against `intent + chosen name + role` → `review` |
 | `intents` | `{}` | fnmatch pattern → `{min_confidence}` overrides; the longest matching pattern wins |
-| `truncated` | `review` | `dropped > 0` → `review` (the model did not see the whole page) |
+| `truncated` | `warn` | `dropped > 0`: `warn` records it, `review` gates on it |
 
 Verdicts: `auto` (act), `review` (a human confirms first), `blocked` (no
 decision was possible: `none`, or the model call failed). `blocked` and
@@ -164,9 +164,10 @@ Loop rules, all deterministic:
   `min_confidence`: loop decisions carry a lower calibrated p by construction
   (measured: correct decisions at p 0.41–0.99, wrong at 0.39–0.47).
 - Candidate lists are capped at **254** (255 choices minus the `none` option),
-  in-viewport first, and the step records how many were dropped. A scripted
-  flow sends a truncated list to review; the loop does not gate on it (real
-  pages exceed the cap routinely) and relies on `--success` instead.
+  in-viewport first, and the step records how many were dropped. Truncation is
+  a warning by default (`truncated: review` gates on it): real pages exceed the
+  cap routinely — Wikipedia's main page, measured — and blocking them would
+  stop most of the internet.
 
 `replay --execute` re-runs a loop trace and re-checks the recorded `success`
 selector, so an agent run becomes a deterministic CI test.

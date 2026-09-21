@@ -169,6 +169,23 @@ Why an agent would: it does not need its own Playwright MCP, it cannot click a
 trace that `jevnav replay --execute` can re-run in CI. Cost is about
 **$0.00004 and 330ms per step**; `page_state` and `goto` are free.
 
+### When the gate says `review`
+
+`review` is the tool refusing to guess — and it hands back what you need to
+resolve it: the runners-up with their probabilities and a hint. Measured on
+Wikipedia's main page (254 candidates):
+
+1. `goal("search Wikipedia for ...")` → `review` at p=0.33 — the page has two
+   plausible ways to submit, so nothing was clicked.
+2. The caller re-reads the page and calls `browse("Click the Search button that
+   submits the search form in the site header", "click", min_confidence=0.8)`
+   → **auto at p=0.95**, clicked for real.
+3. `goal(...)` again → `done`, **verified: true** against `.mw-search-results`.
+
+So: be specific, and if you know the page better than the model does, set your
+own `min_confidence` — the confidence bar is the caller's call. Risky patterns,
+role/value validation and the outcome check are not overridable.
+
 The stdio path is tested end-to-end in CI: a real MCP client connects to a
 `jevnav mcp` subprocess, lists the tools, calls `goal` and checks the browser
 acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).

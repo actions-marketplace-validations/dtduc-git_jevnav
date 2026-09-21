@@ -161,6 +161,7 @@ def cmd_go(args: argparse.Namespace) -> int:
                     start=resolve_url(args.start, Path.cwd()) if args.start else None,
                     success=args.success,
                     max_steps=args.max_steps,
+                    min_confidence=args.min_confidence,
                     dry_run=args.dry_run,
                     allow_risky=args.allow_risky,
                     settle_ms=args.settle_ms,
@@ -238,6 +239,11 @@ def build_parser() -> argparse.ArgumentParser:
     go.add_argument("--success", help="selector that must be visible when the goal is done")
     go.add_argument("--max-steps", type=int, default=8)
     go.add_argument("--settle-ms", type=int, default=300)
+    go.add_argument(
+        "--min-confidence",
+        type=float,
+        help="your own confidence bar for the loop (risky patterns still gate)",
+    )
     go.add_argument("--trace", help="where to write the trace (default goal.trace.jsonl)")
     go.add_argument("--gates", help="gates.yaml")
     go.add_argument("--report", help="write a markdown report here")

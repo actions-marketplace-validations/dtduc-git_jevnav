@@ -78,6 +78,19 @@ def test_the_loop_stops_on_a_risky_step_without_acting(tmp_path, page, loop_url)
     assert result["steps"][0]["gate"]["verdict"] == "review"
 
 
+def test_a_review_carries_the_runners_up(tmp_path, page, loop_url):
+    page.goto(loop_url)
+    result, trace_path = run(
+        page, tmp_path, [{"action": "click", "target": "Home"}], loop_url, goal="delete my account"
+    )
+    assert result["status"] == "review"
+    _, steps = read_trace(trace_path)
+    alternatives = steps[0]["decision"]["alternatives"]
+    assert alternatives and all("name" in a and "confidence" in a for a in alternatives)
+    assert steps[0]["decision"]["chosen_name"] not in {a["name"] for a in alternatives}
+    assert summarize_goal(result)["alternatives"] == alternatives
+
+
 def test_allow_risky_acts_but_still_records_the_review(tmp_path, page, loop_url):
     page.goto(loop_url)
     result, _ = run(
