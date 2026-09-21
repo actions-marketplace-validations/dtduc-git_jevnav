@@ -125,19 +125,53 @@ deterministic: `fill` on a button is refused before it runs, a field with no
 context value is blocked, two steps that change nothing stop the run, risky
 patterns always go to review, and the outcome is verified against `--success`.
 
-## MCP
+## MCP — for other LLMs
+
+jevnav runs its own browser and exposes it as an MCP server, so a coding agent
+(Claude Code, Codex, Cursor, anything that speaks MCP over stdio) can drive a
+page through Jev decisions instead of writing selectors:
 
 ```bash
 pip install "jevnav[mcp]"
 jevnav mcp --start https://app.example.com --trace session.trace.jsonl
 ```
 
-Three tools: `browse(intent)` decides and acts one step (returning the target,
-its Playwright selector and the confidence), `goal(goal, context_json)` runs the
-whole loop towards a goal, and `page_state()` shows what jevnav can see. Only
-`auto` decisions are executed; `review` comes back unexecuted with the reason.
-The session is written to the same trace format, so it can be replayed
-afterwards.
+Tools:
+
+| tool | what it does |
+|---|---|
+| `goto(url)` | open a page in jevnav's browser |
+| `browse(intent, action, value)` | one step: Jev picks the element, the gate decides, and only `auto` acts |
+| `goal(goal, context_json, max_steps)` | drive the whole way: "sign in and open billing" — returns `done` / `stuck` / `review` and whether the outcome was verified |
+| `page_state()` | URL, title and the interactive elements jevnav can see |
+| `summary()` | this session: steps, auto/review/blocked, cost, latency |
+
+Wire it into a client (this JSON shape is what Cursor, Claude Desktop and VS
+Code use; Claude Code also accepts
+`claude mcp add jevnav -- uvx --from "jevnav[mcp]" jevnav mcp --start <url>`):
+
+```json
+{
+  "mcpServers": {
+    "jevnav": {
+      "command": "uvx",
+      "args": ["--from", "jevnav[mcp]", "jevnav", "mcp",
+               "--start", "https://app.example.com",
+               "--trace", "session.trace.jsonl"],
+      "env": { "TYPESAFE_API_KEY": "..." }
+    }
+  }
+}
+```
+
+Why an agent would: it does not need its own Playwright MCP, it cannot click a
+`Delete` by accident (`review` never executes), and its whole session is a
+trace that `jevnav replay --execute` can re-run in CI. Cost is about
+**$0.00004 and 330ms per step**; `page_state` and `goto` are free.
+
+The stdio path is tested end-to-end in CI: a real MCP client connects to a
+`jevnav mcp` subprocess, lists the tools, calls `goal` and checks the browser
+acted (`tests/test_mcp_server.py`, no network, fake Jev endpoint).
 
 ## How it works
 

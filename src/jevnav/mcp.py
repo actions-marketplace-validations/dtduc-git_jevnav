@@ -11,6 +11,9 @@ and the agent (or the human behind it) decides what to do.
 from __future__ import annotations
 
 import json
+import queue
+import threading
+from collections.abc import Callable
 from typing import Any
 
 from . import __version__
@@ -22,6 +25,68 @@ from .gates import AUTO, load_gates, verdict
 from .trace import TraceWriter
 
 ACTION_TYPES = {"click", "fill", "select", "check", "hover", "press"}
+
+
+class BrowserThread:
+    """A sync Playwright browser that lives on its own thread.
+
+    MCP servers run an asyncio loop in the thread that calls ``serve()``, and
+    sync Playwright cannot start in a thread that has a running loop. So the
+    browser gets a thread of its own and every browser operation is handed to
+    it and waited for — one agent, one browser, one call at a time.
+    """
+
+    def __init__(self, headed: bool = False, timeout: float = 60.0) -> None:
+        self._jobs: queue.Queue = queue.Queue()
+        self._ready = threading.Event()
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._serve, args=(headed,), daemon=True)
+        self._thread.start()
+        if not self._ready.wait(timeout):
+            raise TimeoutError("the browser did not start in time")
+        if self._error is not None:
+            raise self._error
+
+    def _serve(self, headed: bool) -> None:
+        try:
+            from playwright.sync_api import sync_playwright
+
+            manager = sync_playwright()
+            playwright = manager.__enter__()
+            browser = playwright.chromium.launch(headless=not headed)
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+        except BaseException as error:  # surfaced in the caller's thread
+            self._error = error
+            self._ready.set()
+            return
+        self._ready.set()
+        try:
+            while True:
+                job = self._jobs.get()
+                if job is None:
+                    break
+                function, args, box = job
+                try:
+                    box["value"] = function(page, *args)
+                except BaseException as error:
+                    box["error"] = error
+                finally:
+                    box["done"].set()
+        finally:
+            browser.close()
+            manager.__exit__(None, None, None)
+
+    def call(self, function: Callable[..., Any], *args: Any) -> Any:
+        box: dict[str, Any] = {"done": threading.Event()}
+        self._jobs.put((function, args, box))
+        box["done"].wait()
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
+
+    def close(self) -> None:
+        self._jobs.put(None)
+        self._thread.join(timeout=10)
 
 
 class Session:
@@ -43,16 +108,11 @@ class Session:
         self.gates = load_gates(gates)
         self.model = model
         self.client = client or _client()
-        self.manager = None
-        self.browser = None
-        if page is None:
-            from playwright.sync_api import sync_playwright
-
-            self.manager = sync_playwright()
-            self.playwright = self.manager.__enter__()
-            self.browser = self.playwright.chromium.launch(headless=not headed)
-            page = self.browser.new_page(viewport={"width": 1280, "height": 900})
+        self.browser: BrowserThread | None = None
         self.page = page
+        if page is None:
+            self.browser = BrowserThread(headed=headed)
+            self.page = self.on_page(lambda browser_page: browser_page)
         self.writer = (
             TraceWriter(trace, flow="mcp-session", model=model, tool=f"jevnav/{__version__}")
             if trace
@@ -60,30 +120,37 @@ class Session:
         )
         self.steps: list[dict[str, Any]] = []
         if start:
-            self.page.goto(start, wait_until="domcontentloaded")
+            self.on_page(lambda page: page.goto(start, wait_until="domcontentloaded"))
 
     def close(self) -> None:
         if self.writer:
             self.writer.close()
         if self.browser:
             self.browser.close()
-        if self.manager:
-            self.manager.__exit__(None, None, None)
         self.client.close()
 
+    def on_page(self, function: Callable[[Any], Any]) -> Any:
+        """Run one browser operation on whichever thread owns the browser."""
+        if self.browser is not None:
+            return self.browser.call(function)
+        return function(self.page)
+
     def browse(self, intent: str, action: str, value: str | None) -> dict[str, Any]:
+        return self.on_page(lambda page: self._browse(page, intent, action, value))
+
+    def _browse(self, page: Any, intent: str, action: str, value: str | None) -> dict[str, Any]:
         if action not in ACTION_TYPES:
             return {
                 "status": "error",
                 "error": f"unknown action {action!r} (expected one of {sorted(ACTION_TYPES)})",
             }
-        candidates, total, dropped = page_module.extract(self.page)
+        candidates, total, dropped = page_module.extract(page)
         step = {
             "step": len(self.steps) + 1,
             "intent": intent,
             "action": {"type": action, **({"value": value} if value is not None else {})},
-            "url": self.page.url,
-            "title": self.page.title(),
+            "url": page.url,
+            "title": page.title(),
             "total_on_page": total,
             "dropped": dropped,
             "candidates": candidates,
@@ -95,7 +162,7 @@ class Session:
             try:
                 decision = ask(
                     self.client,
-                    url=self.page.url,
+                    url=page.url,
                     title=step["title"],
                     intent=intent,
                     candidates=candidates,
@@ -111,7 +178,7 @@ class Session:
         )
         selector = None
         if chosen is not None:
-            selector, unique = page_module.locator_for(self.page, chosen)
+            selector, unique = page_module.locator_for(page, chosen)
             selector = selector if unique else None
         step |= {
             "decision": decision,
@@ -129,14 +196,14 @@ class Session:
         if gate == AUTO:
             try:
                 page_module.execute(
-                    self.page,
+                    page,
                     chosen["cid"],
                     action_runtime(
                         {"action": action, **({"value": value} if value is not None else {})}
                     ),
                 )
                 step["result"]["executed"] = True
-                out |= {"url": self.page.url, "title": self.page.title()}
+                out |= {"url": page.url, "title": page.title()}
             except Exception as error:
                 step["result"]["error"] = f"{type(error).__name__}: {error}"
                 out |= {"status": "error", "error": step["result"]["error"]}
@@ -151,24 +218,35 @@ class Session:
         """Drive the browser towards a goal, one gated Jev decision per step."""
         from .trace import NullWriter
 
-        result = run_goal(
-            goal,
-            page=self.page,
-            client=self.client,
-            gates=self.gates,
-            writer=self.writer or NullWriter(),
-            model=self.model,
-            context=context or {},
-            max_steps=max_steps,
+        result = self.on_page(
+            lambda page: run_goal(
+                goal,
+                page=page,
+                client=self.client,
+                gates=self.gates,
+                writer=self.writer or NullWriter(),
+                model=self.model,
+                context=context or {},
+                max_steps=max_steps,
+            )
         )
         self.steps.extend(result["steps"])
         return summarize_goal(result)
 
+    def goto(self, url: str) -> dict[str, Any]:
+        """Open a URL in jevnav's browser (the agent's first move when it has no --start)."""
+        self.on_page(lambda page: page.goto(url, wait_until="domcontentloaded"))
+        state = self.page_state()
+        return {"url": state["url"], "title": state["title"], "elements": state["elements"]}
+
     def page_state(self) -> dict[str, Any]:
-        candidates, total, dropped = page_module.extract(self.page)
+        return self.on_page(self._page_state)
+
+    def _page_state(self, page: Any) -> dict[str, Any]:
+        candidates, total, dropped = page_module.extract(page)
         return {
-            "url": self.page.url,
-            "title": self.page.title(),
+            "url": page.url,
+            "title": page.title(),
             "elements": total,
             "listed": len(candidates),
             "dropped": dropped,
@@ -219,6 +297,11 @@ def serve(
         executed; ``review`` means a human should confirm first.
         """
         return json.dumps(session.browse(intent, action, value), ensure_ascii=False)
+
+    @mcp.tool()
+    def goto(url: str) -> str:
+        """Open a URL in jevnav's browser and report what is on the page."""
+        return json.dumps(session.goto(url), ensure_ascii=False)
 
     @mcp.tool()
     def goal(goal: str, context_json: str = "{}", max_steps: int = 8) -> str:

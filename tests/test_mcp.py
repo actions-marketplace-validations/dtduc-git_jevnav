@@ -125,6 +125,9 @@ def test_tools_are_registered(monkeypatch):
         def browse(self, *args):
             return {}
 
+        def goto(self, url):
+            return {"url": url}
+
         def page_state(self):
             return {}
 
@@ -135,7 +138,7 @@ def test_tools_are_registered(monkeypatch):
     monkeypatch.setattr(mcp_module, "Session", FakeSession)
     assert mcp_module.serve(start=None, trace=None, gates=None) == 0
     assert captured["name"] == "jevnav"
-    assert captured["tools"] == ["browse", "goal", "page_state", "summary"]
+    assert captured["tools"] == ["browse", "goto", "goal", "page_state", "summary"]
     assert captured["ran"] is True
 
 
