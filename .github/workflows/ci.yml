@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Sync
+        run: uv sync
+      - name: Install browsers
+        run: uv run playwright install --with-deps chromium
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format check
+        run: uv run ruff format --check .
+      - name: Tests
+        run: uv run pytest
+
+  replay:
+    # The action as users get it, run against the committed example trace.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./
+        with:
+          trace: examples/local-demo/demo.trace.jsonl
+          report: replay-report.md
+          version: local
+      - name: Report
+        run: cat replay-report.md

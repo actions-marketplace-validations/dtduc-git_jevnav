@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+
+# Traces contain page URLs and element names from the sites you drive.
+# Keep them local unless you audited what is inside.
+*.trace.jsonl
+!examples/**/*.trace.jsonl
+traces/
+reports/

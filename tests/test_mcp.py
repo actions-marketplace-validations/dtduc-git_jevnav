@@ -1,0 +1,147 @@
+import json
+
+import pytest
+from helpers import FakeJev
+
+from jevnav import cli
+
+ANSWERS = {
+    "Sign in to the existing account": "sign in",
+    "Type the password": "password",
+    "Delete the task about shipping release notes": "delete ship release notes",
+    "Permanently delete the whole account": "none",
+}
+
+
+@pytest.fixture(autouse=True)
+def offline_jev(monkeypatch):
+    monkeypatch.setattr(cli, "_client", lambda: FakeJev(ANSWERS).client())
+
+
+@pytest.fixture
+def session(app_url, tmp_path, page):
+    from jevnav.mcp import Session
+
+    instance = Session(
+        start=app_url,
+        trace=str(tmp_path / "session.trace.jsonl"),
+        page=page,
+        client=FakeJev(ANSWERS).client(),
+    )
+    yield instance
+    instance.close()
+
+
+def test_browse_executes_an_auto_decision(session):
+    out = session.browse("Sign in to the existing account", "click", None)
+    assert out["status"] == "auto"
+    assert out["confidence"] > 0.9
+    assert out["target"]["selector"] == 'role=button[name="Sign in"]'
+    assert session.steps[0]["result"]["executed"] is True
+
+
+def test_browse_never_executes_a_risky_decision(session):
+    out = session.browse("Delete the task about shipping release notes", "click", None)
+    assert out["status"] == "review"
+    assert "risky" in out["reason"]
+    assert session.steps[0]["result"]["executed"] is False
+
+
+def test_browse_reports_a_blocked_decision(session):
+    out = session.browse("Permanently delete the whole account and all of its data", "click", None)
+    assert out["status"] == "blocked"
+    assert out["target"]["selector"] is None
+
+
+def test_browse_fills_when_allowed(session):
+    out = session.browse("Type the password", "fill", "hunter2")
+    assert out["status"] in {"auto", "review"}
+    if out["status"] == "auto":
+        assert session.page.input_value("#login-password") == "hunter2"
+
+
+def test_page_state_lists_candidates(session):
+    state = session.page_state()
+    assert state["title"].startswith("Acme Console")
+    assert state["elements"] > 10
+    assert any(c["name"] == "Sign in" for c in state["candidates"])
+
+
+def test_summary_counts_gates(session):
+    session.browse("Sign in to the existing account", "click", None)
+    session.browse("Delete the task about shipping release notes", "click", None)
+    summary = session.summary()
+    assert summary["steps"] == 2
+    assert summary["auto"] == 1 and summary["review"] == 1
+
+
+def test_session_trace_is_replayable(session, tmp_path):
+    from jevnav.replay import replay_trace
+    from jevnav.trace import read_trace
+
+    session.browse("Sign in to the existing account", "click", None)
+    path = tmp_path / "session.trace.jsonl"
+    run, steps = read_trace(path)
+    assert run["flow"] == "mcp-session"
+    assert len(steps) == 1
+    result = replay_trace(path, page=session.page)
+    assert result["failed"] == []
+
+
+def test_browse_rejects_unknown_actions(session):
+    out = session.browse("Sign in", "teleport", None)
+    assert out["status"] == "error"
+    assert "unknown action" in out["error"]
+
+
+def test_tools_are_registered(monkeypatch):
+    pytest.importorskip("mcp")
+    import jevnav.mcp as mcp_module
+
+    captured = {}
+
+    class FakeServer:
+        def __init__(self, name):
+            captured["name"] = name
+            captured["tools"] = []
+
+        def tool(self):
+            def register(fn):
+                captured["tools"].append(fn.__name__)
+                return fn
+
+            return register
+
+        def run(self):
+            captured["ran"] = True
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def close(self):
+            pass
+
+        def browse(self, *args):
+            return {}
+
+        def page_state(self):
+            return {}
+
+        def summary(self):
+            return {}
+
+    monkeypatch.setattr(mcp_module, "server_class", lambda: FakeServer)
+    monkeypatch.setattr(mcp_module, "Session", FakeSession)
+    assert mcp_module.serve(start=None, trace=None, gates=None) == 0
+    assert captured["name"] == "jevnav"
+    assert captured["tools"] == ["browse", "page_state", "summary"]
+    assert captured["ran"] is True
+
+
+def test_mcp_returns_json(session, monkeypatch):
+    pytest.importorskip("mcp")
+    payload = json.loads(
+        json.dumps(session.browse("Sign in to the existing account", "click", None))
+    )
+    assert payload["status"] == "auto"

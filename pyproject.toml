@@ -1,0 +1,78 @@
+[project]
+name = "jevnav"
+dynamic = ["version"]
+description = "Browser automation whose decisions you can replay, test and audit — Jev picks the element, jevnav records the trace, gates risky actions and replays offline in CI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Duke - Duc Dinh", email = "dtduc.contact@gmail.com" }]
+keywords = [
+  "playwright",
+  "browser-automation",
+  "jev",
+  "typesafe",
+  "system-one",
+  "replay",
+  "trace",
+  "calibration",
+  "testing",
+  "ci",
+  "agents",
+  "mcp",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = [
+  "playwright>=1.49",
+  "pyyaml>=6.0",
+  "jevassert>=0.2,<0.3",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+
+[project.scripts]
+jevnav = "jevnav.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dtduc-git/jevnav"
+Issues = "https://github.com/dtduc-git/jevnav/issues"
+Changelog = "https://github.com/dtduc-git/jevnav/releases"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/jevnav/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jevnav"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5",
+  "mcp>=1.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

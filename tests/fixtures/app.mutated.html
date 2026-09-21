@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Acme Console — Home</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; }
+  nav { display: flex; gap: 12px; padding: 12px 24px; background: #111; color: #fff; }
+  nav a { color: #fff; }
+  main { padding: 24px; max-width: 640px; }
+  fieldset { border: 1px solid #ccc; margin: 16px 0; padding: 12px; }
+  label { display: block; margin: 8px 0 2px; }
+  input { padding: 6px; width: 100%; box-sizing: border-box; }
+  button { padding: 8px 14px; margin-top: 10px; }
+  ul.tasks li { margin: 6px 0; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/">Home</a>
+  <a href="/products">Products</a>
+  <a href="/pricing">Pricing</a>
+  <a href="/support">Support</a>
+</nav>
+<main>
+  <h1>Welcome back</h1>
+
+  <form id="login" onsubmit="return false">
+    <fieldset>
+      <legend>Sign in</legend>
+      <label for="login-email">Email address</label>
+      <input id="login-email" name="email" type="email" placeholder="you@example.com">
+      <label for="login-password">Password</label>
+      <input id="login-password" name="password" type="password">
+      <button id="login-submit" data-testid="login-submit" type="submit">Log in</button>
+      <a href="/reset" id="forgot" data-testid="forgot-password">Reset your password</a>
+    </fieldset>
+  </form>
+
+  <form id="signup" onsubmit="return false">
+    <fieldset>
+      <legend>New to Acme?</legend>
+      <label for="signup-email">Work email</label>
+      <input id="signup-email" name="work_email" type="email">
+      <button id="signup-submit" data-testid="signup-submit" type="submit">Create account</button>
+    </fieldset>
+  </form>
+
+  <section>
+    <h2>Today</h2>
+    <ul class="tasks">
+      <li>Ship release notes
+        <button aria-label="Delete Ship release notes" data-testid="del-1">Delete</button>
+      </li>
+      <li>Renew TLS certificate
+        <button aria-label="Remove Renew TLS certificate" data-testid="del-2">Delete</button>
+      </li>
+    </ul>
+  </section>
+
+  <form id="notify" onsubmit="return false">
+    <fieldset>
+      <legend>Notification settings</legend>
+      <label for="notify-email">Alert email</label>
+      <input id="notify-email" name="alert_email" type="email">
+      <button id="notify-save" data-testid="notify-save" type="submit">Save</button>
+      <button id="notify-cancel" data-testid="notify-cancel" type="button">Cancel</button>
+    </fieldset>
+  </form>
+</main>
+</body>
+</html>

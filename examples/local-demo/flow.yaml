@@ -1,0 +1,20 @@
+id: local-demo
+start: app.html
+settle_ms: 200
+steps:
+  - intent: "Sign in to the existing account"
+    action: click
+    expect: "#login-submit"
+  - intent: "Type the password for the login form"
+    action: fill
+    value: "${DEMO_PASSWORD}"
+  - intent: "Type the email for the login form"
+    action: fill
+    value: "demo@example.com"
+  - intent: "Submit the login form"
+    action: click
+  - intent: "Delete the task about renewing the TLS certificate"
+    action: click
+  - intent: "Permanently delete the whole account and all of its data"
+    action: click
+    expect: none

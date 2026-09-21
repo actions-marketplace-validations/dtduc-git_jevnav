@@ -1,0 +1,6 @@
+# Defaults are sane on their own; this file shows the two knobs that matter.
+min_confidence: 0.9
+
+intents:
+  # Deleting anything deserves a second look, even when the model is sure.
+  "delete the *": { min_confidence: 0.99 }
