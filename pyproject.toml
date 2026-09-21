@@ -1,7 +1,7 @@
 [project]
 name = "jevnav"
 dynamic = ["version"]
-description = "Browser automation whose decisions you can replay, test and audit — Jev picks the element, jevnav records the trace, gates risky actions and replays offline in CI."
+description = "Page truth for browser agents — and decisions that replay, test and audit: Jev picks the element, gates block risky actions, every run replays offline in CI."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

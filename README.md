@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.dtduc-git/jevnav -->
 
-**Browser automation whose decisions you can replay, test and audit.**
+**Page truth for browser agents — and decisions that replay, test and audit.**
 
 [![CI](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml/badge.svg)](https://github.com/dtduc-git/jevnav/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/jevnav?logo=pypi&label=pypi)](https://pypi.org/project/jevnav/)
@@ -10,6 +10,16 @@
 [![MCP registry](https://img.shields.io/badge/MCP%20registry-io.github.dtduc--git%2Fjevnav-6E56CF)](https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.dtduc-git/jevnav)
 [![Marketplace](https://img.shields.io/badge/Marketplace-jevnav%20replay-2EA44F?logo=github)](https://github.com/marketplace/actions/jevnav-replay)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+A coding agent working on a frontend codebase gets two things from jevnav:
+
+- **Page truth, not pixels.** Structure, computed styles and controls come back
+  as facts, and `diff` reports `font-size 32px → 28px` between a mockup and the
+  running app — the shape an agent can fix. No screenshots in the decision loop.
+- **Evidence, not confidence.** Every action is a Jev decision with a calibrated
+  probability, risky ones are gated, and the whole run is a trace that `replay`
+  re-checks offline in CI: a site change that breaks a recorded decision exits 1,
+  with no model call and no API key.
 
 Selector-based tests break the moment a label changes, and LLM browser agents
 are confident, unauditable and occasionally wrong. jevnav sits in between:
@@ -25,6 +35,28 @@ are confident, unauditable and occasionally wrong. jevnav sits in between:
 4. **`replay` is the regression test.** Offline, no model call: re-resolve every
    recorded decision against the page as it is now. A site change that breaks a
    target fails CI; everything else is reported as drift, not noise.
+
+## Page truth for your agent
+
+The facts a coding agent needs about a rendered page, without a screenshot:
+`outline(selector)` for the region's structure (tags, headings, text, boxes),
+`styles(selector, props)` for the computed values the browser resolved,
+`page_state()` for the controls jevnav can see.
+
+Mockup vs app, as facts instead of pixels — `jevnav diff` reports structure and
+style differences and exits 1 on drift:
+
+```
+| element                 | property      | mockup | app  |
+|---|---|---|---|
+| h1 [Pricing]            | font-size     | 32px   | 28px |
+| button#cta [Start free] | border-radius | 8px    | 4px  |
+```
+
+A `font-size 32px → 28px` is something an agent can fix; a red pixel diff is
+not. Once the app matches, pin the outcome (`goal(..., success="<selector>")`)
+and `replay --execute` re-checks it in CI. Full walkthrough:
+[Matching a mockup to the app](#matching-a-mockup-to-the-app).
 
 ## Install
 
