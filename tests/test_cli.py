@@ -256,3 +256,13 @@ def test_session_options_bind_to_the_real_session(tmp_path):
         }[command]
         parsed = cli.build_parser().parse_args([command, *extra])
         inspect.signature(cli._session).bind(**cli.session_options(parsed))
+
+
+def test_release_metadata_matches_package_version():
+    from pathlib import Path
+
+    from jevnav import __version__
+
+    meta = json.loads((Path(__file__).resolve().parents[1] / "server.json").read_text())
+    assert meta["version"] == __version__
+    assert meta["packages"][0]["version"] == __version__
