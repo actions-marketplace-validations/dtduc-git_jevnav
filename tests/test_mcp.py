@@ -139,7 +139,9 @@ def test_tools_are_registered(monkeypatch):
             captured["name"] = name
             captured["tools"] = []
 
-        def tool(self):
+        def tool(self, **kwargs):
+            captured.setdefault("annotations", []).append(kwargs.get("annotations"))
+
             def register(fn):
                 captured["tools"].append(fn.__name__)
                 return fn
@@ -207,6 +209,12 @@ def test_tools_are_registered(monkeypatch):
         "upload_files",
         "wait_for",
     ]
+    # Every tool declares annotations: TDQS reads them from the schema.
+    assert len(captured["annotations"]) == len(captured["tools"])
+    assert all(ann is not None for ann in captured["annotations"])
+    assert all(
+        ann.model_dump(by_alias=True)["readOnlyHint"] is not None for ann in captured["annotations"]
+    )
     assert captured["ran"] is True
 
 

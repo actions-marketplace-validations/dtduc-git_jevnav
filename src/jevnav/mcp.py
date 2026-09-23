@@ -673,7 +673,7 @@ class Session:
 
         if shutil.which("npx") is None:
             raise RuntimeError("lighthouse needs node/npx on PATH")
-        target = url or self.page.url
+        target = url or self.on_page(lambda page: page.url)
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / "lighthouse.json"
             process = subprocess.run(
@@ -923,7 +923,29 @@ def serve(
     )
     mcp = server_class()("jevnav")
 
-    @mcp.tool()
+    from mcp.types import ToolAnnotations
+
+    def reads(*, open_world: bool = True) -> ToolAnnotations:
+        """Observation tools: they read the page or jevnav's own buffers."""
+        return ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=open_world,
+        )
+
+    def acts(*, destructive: bool = False, idempotent: bool = False) -> ToolAnnotations:
+        """Acts on the browser. destructive=True: it can overwrite or remove
+        state (a field value, a tab, a policy); idempotent=True: repeating the
+        same call is a no-op."""
+        return ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=destructive,
+            idempotentHint=idempotent,
+            openWorldHint=True,
+        )
+
+    @mcp.tool(annotations=acts(destructive=True))
     def browse(
         intent: str,
         action: str = "click",
@@ -940,12 +962,12 @@ def serve(
         """
         return json.dumps(session.browse(intent, action, value, min_confidence), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(idempotent=True))
     def goto(url: str) -> str:
         """Open a URL in jevnav's browser and report what is on the page."""
         return json.dumps(session.goto(url), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def goal(
         goal: str, context_json: str = "{}", max_steps: int = 8, success: str | None = None
     ) -> str:
@@ -964,22 +986,23 @@ def serve(
             return json.dumps({"status": "error", "error": f"context_json is not JSON: {error}"})
         return json.dumps(session.goal(goal, context, max_steps, success), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads())
     def page_state() -> str:
-        """Current URL, title and the interactive elements jevnav can see."""
+        """Current URL, title and the interactive elements jevnav can see. The
+        elements it can act on carry a jevnav data-jevcid stamp."""
         return json.dumps(session.page_state(), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads(open_world=False))
     def console(limit: int = 20, only_errors: bool = False) -> str:
         """Recent console messages and page errors (observation only, never traced)."""
         return json.dumps(session.console(limit, only_errors), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads(open_world=False))
     def network(limit: int = 20, only_failed: bool = False) -> str:
         """Recent network requests; only_failed keeps 4xx/5xx and transport errors."""
         return json.dumps(session.network(limit, only_failed), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def screenshot(
         path: str | None = None, full_page: bool = False, selector: str | None = None
     ) -> str:
@@ -988,29 +1011,33 @@ def serve(
             session.screenshot(path, full_page=full_page, selector=selector), ensure_ascii=False
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def upload_files(
         paths: list[str], selector: str | None = None, intent: str | None = None
     ) -> str:
-        """Set files on a file input, chosen by selector or by an intent Jev resolves."""
+        """Set files on a file input, chosen by selector or by an intent Jev
+        resolves. Replaces the input's current selection; every path must exist
+        on the machine running the server."""
         return json.dumps(
             session.upload_files(paths, selector=selector, intent=intent), ensure_ascii=False
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def drag(source_selector: str, target_selector: str) -> str:
-        """Drag one element onto another."""
+        """Drag the element at source_selector onto target_selector. The drag
+        runs immediately with no confirmation, so a wrong target can change
+        page state."""
         return json.dumps(
             session.drag(source_selector=source_selector, target_selector=target_selector),
             ensure_ascii=False,
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def press_key(key: str, selector: str | None = None) -> str:
         """Press a key or combination ("Control+A", "Shift+Enter"), optionally on an element."""
         return json.dumps(session.press_key(key, selector), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def fill_form(fields_json: str) -> str:
         """Fill several fields in one call: a JSON list of {selector|intent, value, action?}."""
         try:
@@ -1019,22 +1046,26 @@ def serve(
             return json.dumps({"error": f"fields_json is not JSON: {error}"})
         return json.dumps(session.fill_form(fields), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads(open_world=False))
     def network_detail(index: int | None = None, url_contains: str | None = None) -> str:
         """Headers and body of one recorded request (newest match when filtering by URL)."""
         return json.dumps(session.network_detail(index, url_contains), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def dialog_policy(action: str = "accept", match: str | None = None) -> str:
-        """Answer dialogs from now on: the default (match=None) or one whose text matches."""
+        """Answer dialogs from now on. match=None sets the session default;
+        with a match, adds a rule for dialogs whose text contains it (an
+        earlier rule with the same text is replaced). Applies to future dialogs
+        only; dialogs already seen stay recorded."""
         return json.dumps(session.dialog_policy(action, match), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(idempotent=True))
     def resize(width: int, height: int) -> str:
-        """Resize the browser viewport."""
+        """Resize the browser viewport to width x height. The size persists for
+        the session and can change what the page renders (responsive layout)."""
         return json.dumps(session.resize(width, height), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(idempotent=True))
     def emulate(
         color_scheme: str | None = None,
         reduced_motion: str | None = None,
@@ -1043,7 +1074,9 @@ def serve(
         geolocation: str | None = None,
         offline: bool | None = None,
     ) -> str:
-        """Emulate media, geolocation ("lat,lon") and connectivity."""
+        """Emulate media, geolocation ("lat,lon") and connectivity. Overrides
+        persist for the session and apply to later page loads; fields you omit
+        are left as they are."""
         return json.dumps(
             session.emulate(
                 color_scheme=color_scheme,
@@ -1056,7 +1089,7 @@ def serve(
             ensure_ascii=False,
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def route(
         pattern: str,
         status: int = 200,
@@ -1064,7 +1097,8 @@ def serve(
         content_type: str = "application/json",
         abort: bool = False,
     ) -> str:
-        """Stub or block requests matching a URL pattern (testing; not part of a trace)."""
+        """Stub or block requests matching a URL pattern (testing; routes are
+        not part of a trace). The stub persists until unroute."""
         return json.dumps(
             session.route(
                 pattern, status=status, body=body, content_type=content_type, abort=abort
@@ -1072,91 +1106,101 @@ def serve(
             ensure_ascii=False,
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(idempotent=True))
     def unroute(pattern: str | None = None) -> str:
         """Remove one route stub, or all of them."""
         return json.dumps(session.unroute(pattern), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads())
     def perf_metrics() -> str:
         """Chromium performance counters for the current page (CDP)."""
         return json.dumps(session.perf_metrics(), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def heap_snapshot(path: str | None = None) -> str:
-        """Write a Chromium heap snapshot to a file."""
+        """Write a Chromium heap snapshot to a file (default:
+        jevnav-heap-<timestamp>.heapsnapshot in the working directory). Chromium
+        only; the file can be large and is a debug artifact, not part of a
+        trace."""
         return json.dumps(session.heap_snapshot(path), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(idempotent=True))
     def lighthouse(
         url: str | None = None, categories: str = "performance,accessibility,best-practices,seo"
     ) -> str:
-        """Run Lighthouse (through npx) against the current or given URL and return the scores."""
+        """Run Lighthouse (through npx) against the current or given URL and
+        return the scores. Needs node/npx on PATH (npx fetches Lighthouse on
+        first use), takes tens of seconds, and does not change the page."""
         return json.dumps(session.lighthouse(url, categories=categories), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def trace_start(screenshots: bool = True) -> str:
         """Start a Playwright trace (open it later with `npx playwright show-trace`)."""
         return json.dumps(session.trace_start(screenshots), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def trace_stop(path: str | None = None) -> str:
         """Stop tracing and write the trace zip."""
         return json.dumps(session.trace_stop(path), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads(open_world=False))
     def dialogs() -> str:
         """Every alert/confirm/prompt seen, with the policy that resolved it."""
         return json.dumps(session.dialogs(), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads())
     def outline(selector: str = "body", limit: int = 200) -> str:
         """Structural outline of a page or region: tags, headings, text, boxes."""
         return json.dumps(session.outline(selector, limit), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads())
     def styles(selector: str, props: list[str] | None = None, limit: int = 10) -> str:
         """Computed styles for the elements matching a selector (the facts behind a visual diff)."""
         return json.dumps(session.styles(selector, props, limit), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def read_js(expression: str) -> str:
-        """Evaluate a JS expression in the page and return its value (observation only)."""
+        """Evaluate a JS expression in the page and return its value. This is
+        arbitrary JavaScript: an expression can change page state, so treat it
+        as an action and keep it for reading values only (disable with
+        --no-eval)."""
         return json.dumps({"value": session.read_js(expression)}, ensure_ascii=False, default=str)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads())
     def wait_for(
         text: str | None = None, selector: str | None = None, timeout_ms: int = 15000
     ) -> str:
-        """Wait until text or a selector appears, then report the page."""
+        """Wait until text or a selector appears, then report the page like
+        page_state (element stamps included)."""
         return json.dumps(session.wait_for(text, selector, timeout_ms), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def scroll(direction: str = "down", amount: int = 800) -> str:
         """Scroll the page down or up by pixels of document height."""
         return json.dumps(session.scroll(direction, amount), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads())
     def tabs() -> str:
         """List the open pages and which one jevnav is driving."""
         return json.dumps(session.tabs(), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts())
     def new_page(url: str | None = None) -> str:
         """Open a new tab (optionally at a URL) and drive it from now on."""
         return json.dumps(session.new_page(url), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(idempotent=True))
     def select_page(index: int) -> str:
-        """Drive the tab at this index (see tabs)."""
+        """Drive the tab at this index (see tabs). The switch is immediate; the
+        tab keeps its state, and an out-of-range index is an error."""
         return json.dumps(session.select_page(index), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=acts(destructive=True))
     def close_page(index: int) -> str:
         """Close the tab at this index and keep driving a remaining one."""
         return json.dumps(session.close_page(index), ensure_ascii=False)
 
-    @mcp.tool()
+    @mcp.tool(annotations=reads(open_world=False))
     def summary() -> str:
         """This session so far: steps, auto/review/blocked counts, cost, latency."""
         return json.dumps(session.summary(), ensure_ascii=False)

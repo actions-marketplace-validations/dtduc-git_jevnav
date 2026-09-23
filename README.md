@@ -343,7 +343,9 @@ Why an agent would: it does not need its own Playwright MCP, it cannot click a
 `Delete` by accident (`review` never executes; risky-action patterns ship for
 nine languages, and extend them in `gates.yaml`), and its whole session is a
 trace that `jevnav replay --execute` can re-run in CI. Cost is about
-**$0.00004 and 330ms per step**; `page_state` and `goto` are free.
+**$0.00004 and 330ms per step**; `page_state` and `goto` are free. Every tool
+declares its MCP annotations — read-only, destructive, idempotent, open-world —
+so a client can tell an observation from an action before calling it.
 
 ### Dialogs: answered by rule, not parked
 

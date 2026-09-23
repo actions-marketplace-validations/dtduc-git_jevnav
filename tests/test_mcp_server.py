@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -85,20 +86,36 @@ def run_in_thread(coroutine) -> Any:
     return box["value"]
 
 
-async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) -> list[str]:
-    from mcp import ClientSession, StdioServerParameters, stdio_client
+def server_params(fake_endpoint: str, trace: Path):
+    from mcp import StdioServerParameters
 
     env = {
         **os.environ,
         "TYPESAFE_BASE_URL": fake_endpoint,
         "TYPESAFE_API_KEY": "test-key",
     }
-    params = StdioServerParameters(
+    return StdioServerParameters(
         command=sys.executable,
         args=["-m", "jevnav", "mcp", "--trace", str(trace)],
         env=env,
         cwd=str(REPO),
     )
+
+
+async def list_tool_annotations(fake_endpoint: str, trace: Path) -> dict[str, Any]:
+    from mcp import ClientSession, stdio_client
+
+    async with stdio_client(server_params(fake_endpoint, trace)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = (await session.list_tools()).tools
+    return {tool.name: tool.annotations for tool in tools}
+
+
+async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) -> list[str]:
+    from mcp import ClientSession, stdio_client
+
+    params = server_params(fake_endpoint, trace)
     outcomes: list[str] = []
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -109,6 +126,72 @@ async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) 
                 result = await session.call_tool(name, arguments)
                 outcomes.append(result.content[0].text)
     return outcomes
+
+
+# tool name -> (read_only, destructive, idempotent, open_world)
+# The whole table is pinned: a mapping change must be deliberate.
+ANNOTATIONS: dict[str, tuple[bool, bool, bool, bool]] = {
+    "browse": (False, True, False, True),
+    "close_page": (False, True, False, True),
+    "console": (True, False, True, False),
+    "dialog_policy": (False, False, False, True),
+    "dialogs": (True, False, True, False),
+    "drag": (False, True, False, True),
+    "emulate": (False, False, True, True),
+    "fill_form": (False, True, False, True),
+    "goal": (False, True, False, True),
+    "goto": (False, False, True, True),
+    "heap_snapshot": (False, False, False, True),
+    "lighthouse": (False, False, True, True),
+    "network": (True, False, True, False),
+    "network_detail": (True, False, True, False),
+    "new_page": (False, False, False, True),
+    "outline": (True, False, True, True),
+    "page_state": (True, False, True, True),
+    "perf_metrics": (True, False, True, True),
+    "press_key": (False, True, False, True),
+    "read_js": (False, True, False, True),
+    "resize": (False, False, True, True),
+    "route": (False, False, False, True),
+    "screenshot": (False, False, False, True),
+    "scroll": (False, False, False, True),
+    "select_page": (False, False, True, True),
+    "styles": (True, False, True, True),
+    "summary": (True, False, True, False),
+    "tabs": (True, False, True, True),
+    "trace_start": (False, False, False, True),
+    "trace_stop": (False, False, False, True),
+    "unroute": (False, False, True, True),
+    "upload_files": (False, True, False, True),
+    "wait_for": (True, False, True, True),
+}
+
+
+def hint(ann: Any, key: str) -> bool | None:
+    """Read a ToolAnnotations field, whichever casing this mcp version uses."""
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
+    for name in (key, snake):
+        if hasattr(ann, name):
+            return getattr(ann, name)
+    raise AssertionError(f"no {key} on {ann!r}")
+
+
+def test_every_tool_declares_mcp_annotations(fake_endpoint, tmp_path):
+    """TDQS reads the schema: every tool must say what it does to its world."""
+    annotations = run_in_thread(
+        list_tool_annotations(fake_endpoint, tmp_path / "session.trace.jsonl")
+    )
+    assert set(annotations) == set(ANNOTATIONS)
+    found = {}
+    for name, ann in annotations.items():
+        assert ann is not None, f"{name} has no annotations"
+        found[name] = (
+            hint(ann, "readOnlyHint"),
+            hint(ann, "destructiveHint"),
+            hint(ann, "idempotentHint"),
+            hint(ann, "openWorldHint"),
+        )
+    assert found == ANNOTATIONS
 
 
 def test_mcp_server_lists_tools_and_drives_a_goal(fake_endpoint, tmp_path):
