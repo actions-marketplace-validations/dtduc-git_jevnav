@@ -96,7 +96,7 @@ def server_params(fake_endpoint: str, trace: Path):
     }
     return StdioServerParameters(
         command=sys.executable,
-        args=["-m", "jevnav", "mcp", "--trace", str(trace)],
+        args=["-m", "jevnav", "mcp", "--trace", str(trace), "--allow-file-urls"],
         env=env,
         cwd=str(REPO),
     )
@@ -134,14 +134,14 @@ ANNOTATIONS: dict[str, tuple[bool, bool, bool, bool]] = {
     "browse": (False, True, False, True),
     "close_page": (False, True, False, True),
     "console": (True, False, True, False),
-    "dialog_policy": (False, False, False, True),
+    "dialog_policy": (False, True, False, True),
     "dialogs": (True, False, True, False),
     "drag": (False, True, False, True),
     "emulate": (False, False, True, True),
     "fill_form": (False, True, False, True),
     "goal": (False, True, False, True),
     "goto": (False, False, True, True),
-    "heap_snapshot": (False, False, False, True),
+    "heap_snapshot": (False, True, False, True),
     "lighthouse": (False, False, True, True),
     "network": (True, False, True, False),
     "network_detail": (True, False, True, False),
@@ -153,14 +153,14 @@ ANNOTATIONS: dict[str, tuple[bool, bool, bool, bool]] = {
     "read_js": (False, True, False, True),
     "resize": (False, False, True, True),
     "route": (False, False, False, True),
-    "screenshot": (False, False, False, True),
+    "screenshot": (False, True, False, True),
     "scroll": (False, False, False, True),
     "select_page": (False, False, True, True),
     "styles": (True, False, True, True),
     "summary": (True, False, True, False),
     "tabs": (True, False, True, True),
     "trace_start": (False, False, False, True),
-    "trace_stop": (False, False, False, True),
+    "trace_stop": (False, True, False, True),
     "unroute": (False, False, True, True),
     "upload_files": (False, True, False, True),
     "wait_for": (True, False, True, True),
@@ -252,9 +252,12 @@ def test_mcp_server_lists_tools_and_drives_a_goal(fake_endpoint, tmp_path):
     summary = json.loads(outcomes[4])
     assert summary["steps"] == 3
     assert summary["auto"] == 2
-    run, steps = json.loads(trace.read_text().splitlines()[0]), trace.read_text().splitlines()[1:]
-    assert run["flow"] == "mcp-session"
+    records = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert records[0]["flow"] == "mcp-session"
+    steps = [r for r in records if r.get("kind") == "step"]
+    actions = [r for r in records if r.get("kind") == "action"]
     assert len(steps) == 3
+    assert [a["tool"] for a in actions] == ["goto"]  # primitives are evidence too
 
 
 def test_mcp_browse_returns_a_playwright_selector(fake_endpoint, tmp_path):
@@ -271,3 +274,75 @@ def test_mcp_browse_returns_a_playwright_selector(fake_endpoint, tmp_path):
     browse = json.loads(outcomes[2])
     assert browse["target"]["selector"] == 'role=button[name="Sign in"]'
     assert browse["status"] in {"auto", "review"}
+
+
+def test_acting_tool_calls_are_recorded_in_the_trace(fake_endpoint, tmp_path):
+    """The evidence promise: every acting call lands in the trace, values masked."""
+    trace = tmp_path / "session.trace.jsonl"
+    run_in_thread(
+        drive(
+            fake_endpoint,
+            trace,
+            [
+                ("goto", {"url": fixture_url("loop-app.html")}),
+                (
+                    "fill_form",
+                    {
+                        "fields_json": json.dumps(
+                            [{"selector": "#login-email", "value": "secret@example.com"}]
+                        )
+                    },
+                ),
+                ("press_key", {"key": "Tab"}),
+                ("page_state", {}),  # a reader: no action record
+            ],
+        )
+    )
+    text = trace.read_text(encoding="utf-8")
+    actions = [json.loads(line) for line in text.splitlines() if '"kind": "action"' in line]
+    assert [action["tool"] for action in actions] == ["goto", "fill_form", "press_key"]
+    assert actions[1]["request"]["fields_json"] == [
+        {"selector": "#login-email", "action": "fill", "value": "<18 chars>"}
+    ]
+    assert actions[2]["request"]["key"] == "Tab"  # named keys stay readable
+    assert "secret@example.com" not in text  # typed values stay out of the trace
+
+
+def test_single_character_keys_are_masked_in_the_trace(fake_endpoint, tmp_path):
+    trace = tmp_path / "session.trace.jsonl"
+    run_in_thread(
+        drive(
+            fake_endpoint,
+            trace,
+            [
+                ("goto", {"url": fixture_url("loop-app.html")}),
+                ("press_key", {"key": "s"}),
+            ],
+        )
+    )
+    actions = [
+        json.loads(line) for line in trace.read_text().splitlines() if '"kind": "action"' in line
+    ]
+    assert actions[-1]["request"]["key"] == "<1 char>"
+
+
+async def drive_error(fake_endpoint: str, trace: Path, name: str, args: dict) -> None:
+    from mcp import ClientSession, stdio_client
+
+    async with stdio_client(server_params(fake_endpoint, trace)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            try:
+                await session.call_tool(name, args)
+            except Exception:  # the tool failed; the trace record is the point
+                pass
+
+
+def test_failed_acting_calls_are_recorded_with_their_error(fake_endpoint, tmp_path):
+    trace = tmp_path / "session.trace.jsonl"
+    run_in_thread(drive_error(fake_endpoint, trace, "goto", {"url": "ftp://example.com"}))
+    actions = [
+        json.loads(line) for line in trace.read_text().splitlines() if '"kind": "action"' in line
+    ]
+    assert actions and actions[0]["tool"] == "goto"
+    assert "http" in actions[0]["result"]["error"]

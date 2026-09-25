@@ -345,6 +345,10 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         headed=args.headed,
         user_data_dir=args.user_data_dir,
         cdp=args.cdp,
+        allow_eval=not args.no_eval,
+        max_candidates=args.max_candidates,
+        file_root=args.file_root,
+        allow_file_urls=args.allow_file_urls,
     )
 
 
@@ -506,7 +510,18 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.add_argument(
         "--no-eval",
         action="store_true",
-        help="refuse read_js: closes the untraced JavaScript read channel",
+        help="refuse read_js: closes the JavaScript read channel",
+    )
+    mcp.add_argument(
+        "--file-root",
+        help="uploads read, and screenshot/heap/trace artifacts write, only inside this "
+        "directory (default: the working directory)",
+    )
+    mcp.add_argument(
+        "--allow-file-urls",
+        action="store_true",
+        help="let goto/new_page open file:// URLs (off by default: an agent should not "
+        "read local files through the browser)",
     )
     mcp.add_argument("--gates", help="gates.yaml")
     mcp.add_argument("--model", default="jev-latest")

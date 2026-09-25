@@ -48,25 +48,45 @@ profile Chrome has locked, and it never closes a browser it attached to.
 
 ## Acting on a page
 
-`browse` and `run` execute actions only when the gate says `auto`. `review` and
-`blocked` decisions are recorded and never acted on. `replay --execute`
-re-resolves actions by fingerprint and refuses to act when the target is gone or
-duplicated, so a shifted page cannot be clicked by position.
+`browse`, `goal` and `run` execute actions only when the gate says `auto`.
+`review` and `blocked` decisions are recorded and never acted on.
+`replay --execute` re-resolves actions by fingerprint and refuses to act when the
+target is gone or duplicated, so a shifted page cannot be clicked by position.
 
-The browser is launched fresh per run (a clean profile, no stored cookies) and
-is never pointed at a site you did not put in a flow or an MCP session.
+Fresh-browser mode (the default, no `--user-data-dir`/`--cdp`) starts a clean
+profile with no stored cookies. `run`/`go` only visit the URLs in your flow;
+under MCP the agent names its own URLs with `goto`/`new_page` — that is the point
+of the tool — so point the server at sites you are willing to let it browse.
 
-## `read_js` is a read channel, and it is not traced
+## MCP primitives: gated, traced, and where the boundary really is
 
-`read_js` runs arbitrary JavaScript in the page and returns the value. That is
-exactly what it is for — and with `--cdp` attached to your own Chrome it can read
-anything that browser is logged into: cookies, `localStorage`, tokens, the DOM of
-any open app. Decisions and actions are traced; **observation tools are not**, by
-design (see SPEC). If you want that channel closed, start the server with
-`--no-eval`: `read_js` then refuses every call, and the rest of jevnav works
-unchanged. Files, screenshots, heap snapshots and Playwright traces written by
-jevnav land wherever you pointed them — keep them out of shared machines if the
-sites you drive are sensitive.
+The gate covers the calls where Jev chooses: `browse`, `goal`, and the `intent`
+variants of `fill_form`/`upload_files`. Everything else is a direct primitive
+that runs immediately — `press_key`, `fill_form`/`upload_files` with a
+`selector`, `drag`, `route`, `read_js`, the artifact writers — because the
+caller (the agent or the host behind it) already chose the exact target. Those
+tools carry MCP annotations (`destructiveHint`, `openWorldHint`) so a host can
+require confirmation; MCP annotations are hints, so a host that needs a hard
+boundary must enforce it itself.
+
+What the server does enforce:
+
+- **Every acting call is recorded** in the session trace, with typed values,
+  JS expressions and single-character keys masked (`kind: "action"`; decisions
+  are `kind: "step"`) — unless the server was started with `--no-trace`.
+  Observation tools are not traced, by design (see SPEC). Masking is textual:
+  a modifier combination such as `Shift+a` is recorded as given, and an error
+  message from the page can quote what was typed.
+- **Files stay in one root.** `upload_files` reads only inside `--file-root`
+  (default: the working directory), and `screenshot`, `heap_snapshot` and
+  `trace_stop` write only inside it.
+- **URLs are http(s).** `goto`/`new_page` refuse `file://` unless the server is
+  started with `--allow-file-urls`; `lighthouse` follows the same rule and pins
+  its npm version.
+- **`read_js` is a read channel.** It runs arbitrary JavaScript in the page and
+  returns the value — with `--cdp` attached to your own Chrome it can read
+  anything that browser is logged into. Start the server with `--no-eval` to
+  close it; the rest of jevnav works unchanged.
 
 ## Scope
 

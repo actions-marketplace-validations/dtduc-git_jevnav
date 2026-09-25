@@ -6,9 +6,10 @@ contract.
 
 ## Records
 
-One trace = one JSONL file. First record is the run header, then one record per
-decision, in order. Unknown `kind` values are an error (a trace is either
-complete or broken, never half-read).
+One trace = one JSONL file. First record is the run header, then records in
+order: one `step` per decision, and one `action` per acting-tool call (the
+direct primitives; see "Side tools"). Unknown `kind` values are an error (a
+trace is either complete or broken, never half-read).
 
 ### `run` header
 
@@ -137,15 +138,32 @@ Actions are resolved by **fingerprint**, never by position, and an action whose
 value came from `${ENV}` reads the variable from the environment at replay time.
 If the fingerprint is gone or duplicated, replay refuses to act.
 
+### `action` record
+
+One per acting-tool call that does not go through a decision (`goto`,
+`fill_form` with a selector, `press_key`, `upload_files`, `route`, `read_js`,
+the artifact writers, …). It is evidence, not a decision: no candidates, no
+model, no gate, and `replay` skips it (see `read_actions` in `trace.py`).
+
+| field | type | meaning |
+|---|---|---|
+| `kind` | `"action"` | record type |
+| `at` | ISO-8601 UTC | when the call was recorded |
+| `tool` | string | MCP tool name |
+| `request` | object | the arguments, with typed values and JS expressions masked (`"<N chars>"`) |
+| `result` | object | `{"ok": true}`, or `{"error": "Type: message"}` |
+
 ## Side tools
 
 `console`, `network`, `dialogs`, `read_js`, `outline`, `styles`, `wait_for`, `scroll`, the tab tools
 (`tabs`, `new_page`, `select_page`, `close_page`), `screenshot`, `upload_files`,
 `drag`, `resize`, `emulate`, `route`/`unroute`, `trace_start`/`trace_stop`,
 `perf_metrics`, `heap_snapshot` and `lighthouse` are the agent's eyes and hands
-around the decision loop. They are **observation and navigation only**:
-nothing about them participates in a decision, a gate or a trace's replay path,
-and they are not written to the trace. Dialogs are the exception worth knowing: the sync API must answer a dialog
+around the decision loop. The **observation** ones (`console`, `network`,
+`dialogs`, `outline`, `styles`, `perf_metrics`, `wait_for`, `tabs`) participate
+in nothing and are not written to the trace. The **acting** ones run immediately
+and are recorded as `action` records; they are not part of a trace's replay
+path, because replay re-resolves decisions. Dialogs are the exception worth knowing: the sync API must answer a dialog
 inside its handler (parking one deadlocks the page — measured), so `dialog_policy`
 sets the answer in advance — a session default, or rules matched against the
 dialog's message text — and every dialog is recorded with the rule that fired.

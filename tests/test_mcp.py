@@ -128,7 +128,8 @@ def test_browse_rejects_unknown_actions(session):
     assert "unknown action" in out["error"]
 
 
-def test_tools_are_registered(monkeypatch):
+def fake_registry(monkeypatch):
+    """Install a fake MCP server + session and return what serve() registered."""
     pytest.importorskip("mcp")
     import jevnav.mcp as mcp_module
 
@@ -144,6 +145,9 @@ def test_tools_are_registered(monkeypatch):
 
             def register(fn):
                 captured["tools"].append(fn.__name__)
+                captured.setdefault("traced", {})[fn.__name__] = getattr(
+                    fn, "__jevnav_traced__", False
+                )
                 return fn
 
             return register
@@ -154,6 +158,7 @@ def test_tools_are_registered(monkeypatch):
     class FakeSession:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            captured.setdefault("session_kwargs", []).append(kwargs)
 
         def close(self):
             pass
@@ -172,6 +177,11 @@ def test_tools_are_registered(monkeypatch):
 
     monkeypatch.setattr(mcp_module, "server_class", lambda: FakeServer)
     monkeypatch.setattr(mcp_module, "Session", FakeSession)
+    return mcp_module, captured
+
+
+def test_tools_are_registered(monkeypatch):
+    mcp_module, captured = fake_registry(monkeypatch)
     assert mcp_module.serve(start=None, trace=None, gates=None) == 0
     assert captured["name"] == "jevnav"
     assert sorted(captured["tools"]) == [
@@ -216,6 +226,36 @@ def test_tools_are_registered(monkeypatch):
         ann.model_dump(by_alias=True)["readOnlyHint"] is not None for ann in captured["annotations"]
     )
     assert captured["ran"] is True
+
+
+def test_every_acting_tool_is_traced(monkeypatch):
+    """browse/goal write decision steps; every other acting tool writes an action record."""
+    mcp_module, captured = fake_registry(monkeypatch)
+    assert mcp_module.serve(start=None, trace=None, gates=None) == 0
+    for name, annotations in zip(captured["tools"], captured["annotations"], strict=True):
+        read_only = annotations.model_dump(by_alias=True)["readOnlyHint"]
+        if read_only or name in {"browse", "goal"}:
+            continue
+        assert captured["traced"][name] is True, name
+
+
+def test_serve_passes_the_boundary_flags_to_the_session(monkeypatch):
+    mcp_module, captured = fake_registry(monkeypatch)
+    code = mcp_module.serve(
+        start=None,
+        trace=None,
+        gates=None,
+        allow_eval=False,
+        max_candidates=50,
+        file_root="/tmp/root",
+        allow_file_urls=True,
+    )
+    assert code == 0
+    kwargs = captured["session_kwargs"][0]
+    assert kwargs["allow_eval"] is False
+    assert kwargs["max_candidates"] == 50
+    assert kwargs["file_root"] == "/tmp/root"
+    assert kwargs["allow_file_urls"] is True
 
 
 def test_mcp_returns_json(session, monkeypatch):

@@ -1,20 +1,25 @@
 """jevnav as an MCP server: the agent asks for an intent, jevnav decides, gates and acts.
 
-Every call is recorded to the same trace format as ``jevnav run``, so an MCP
-session is replayable and auditable afterwards. Actions that the gate marks
-``review`` are never executed — the tool returns the decision and the reason,
-and the agent (or the human behind it) decides what to do.
+The gate covers the calls where Jev chooses the action — ``browse``, ``goal``,
+and the ``intent`` variants of ``fill_form``/``upload_files``; a ``review`` there
+is returned unexecuted. The other tools are direct primitives and run
+immediately; their MCP annotations say which of them change state. Either way an
+acting call is written to the same trace as ``jevnav run`` (decisions as steps,
+primitives as action records), so a session is auditable afterwards.
 
     jevnav mcp --start https://app.example.com --trace session.trace.jsonl
 """
 
 from __future__ import annotations
 
+import functools
+import inspect
 import itertools
 import json
 import queue
 import threading
 import time
+import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -24,10 +29,12 @@ from . import page as page_module
 from .agent import run_goal, summarize_goal
 from .decide import ask, failed_decision
 from .flow import action_runtime, summarize_run
-from .gates import AUTO, load_gates, verdict
+from .gates import AUTO, REVIEW, load_gates, verdict
 from .trace import TraceWriter
 
 ACTION_TYPES = {"click", "fill", "select", "check", "hover", "press"}
+# Pinned so `npx -y` never executes an unreviewed release; bump deliberately.
+LIGHTHOUSE_VERSION = "13.5.0"
 
 
 def build_single_question(
@@ -208,6 +215,8 @@ class Session:
         user_agent: str | None = None,
         allow_eval: bool = True,
         max_candidates: int | None = None,
+        file_root: str | Path | None = None,
+        allow_file_urls: bool = False,
     ) -> None:
         from .cli import _client
 
@@ -215,6 +224,14 @@ class Session:
         self.model = model
         self.allow_eval = allow_eval
         self.max_candidates = max_candidates
+        self.file_root = (Path(file_root) if file_root else Path.cwd()).expanduser().resolve()
+        # "/" and the home directory cover everything: with those, a default root
+        # is not a boundary, so uploads ask the operator for an explicit one.
+        self._file_root_unbounded = file_root is None and self.file_root in {
+            Path("/"),
+            Path.home().resolve(),
+        }
+        self.allow_file_urls = allow_file_urls
         self.client = client or _client()
         self.browser: BrowserThread | None = None
         self.page = page
@@ -240,6 +257,7 @@ class Session:
                 trace, flow="mcp-session", model=model, tool=f"jevnav/{__version__}"
             )
         self.steps: list[dict[str, Any]] = []
+        self.actions: list[dict[str, Any]] = []
         if start:
             self.on_page(lambda page: page.goto(start, wait_until="domcontentloaded"))
 
@@ -289,7 +307,7 @@ class Session:
         return self.on_page(lambda page: page_module.styles(page, selector, props, limit))
 
     def read_js(self, expression: str) -> Any:
-        """Evaluate JS in the page and return it (observation; not traced)."""
+        """Evaluate JS in the page and return it (recorded as an action, masked)."""
         if not self.allow_eval:
             raise RuntimeError("read_js is disabled (started with --no-eval)")
         return self.on_page(lambda page: page.evaluate(expression))
@@ -336,6 +354,8 @@ class Session:
         return self.tabs()
 
     def new_page(self, url: str | None = None) -> dict[str, Any]:
+        if url:
+            url = self._check_url(url, scheme="new_page")
         if self.browser is None:
             raise RuntimeError("tabs need jevnav's own browser (not an injected page)")
         self.browser.switch_page(
@@ -366,7 +386,7 @@ class Session:
         self, path: str | None = None, *, full_page: bool = False, selector: str | None = None
     ) -> dict[str, Any]:
         """Save a PNG for a human (or the agent) to look at. Never used by a decision."""
-        target = Path(path or f"jevnav-screenshot-{int(time.time())}.png")
+        target = self._check_writable_path(path or f"jevnav-screenshot-{int(time.time())}.png")
         target.parent.mkdir(parents=True, exist_ok=True)
 
         def capture(page: Any) -> None:
@@ -382,39 +402,94 @@ class Session:
         self, paths: list[str], *, selector: str | None = None, intent: str | None = None
     ) -> dict[str, Any]:
         """Set files on a file input, chosen by selector or by an intent Jev resolves."""
-        missing = [item for item in paths if not Path(item).exists()]
+        resolved = [self._check_readable_file(item) for item in paths]
+        missing = [item for item in resolved if not item.is_file()]
         if missing:
-            raise FileNotFoundError(f"no such file: {', '.join(missing)}")
+            raise FileNotFoundError(f"no such file: {', '.join(str(item) for item in missing)}")
+        paths = [str(item) for item in resolved]
 
-        def choose(page: Any) -> str:
+        def choose(page: Any) -> dict[str, Any]:
+            step: dict[str, Any] | None = None
             if selector:
                 locator = page.locator(selector).first
             else:
-                candidates, _, _ = page_module.extract(page, self.max_candidates)
+                candidates, total, dropped = page_module.extract(page, self.max_candidates)
                 files = [c for c in candidates if (c.get("type") or "").lower() == "file"]
                 if not files:
                     raise RuntimeError("no file input on the page")
                 if intent and len(files) > 1:
-                    question = build_single_question(page, intent, files)
-                    response, _ = self.client.system_one(
-                        {"page": f"{page.title()} — {page.url}"},
-                        {"target": question},
-                        model=self.model,
+                    step = {
+                        "step": len(self.steps) + 1,
+                        "intent": intent,
+                        "action": {
+                            "type": "none"
+                        },  # replay skips it; the fill itself is the action record
+                        "url": page.url,
+                        "title": page.title(),
+                        "total_on_page": total,
+                        "dropped": dropped,
+                        "candidates": files,
+                        "expected_cid": None,
+                    }
+                    try:
+                        decision = ask(
+                            self.client,
+                            url=page.url,
+                            title=page.title(),
+                            intent=intent,
+                            candidates=files,
+                            model=self.model,
+                            total_on_page=total,
+                            dropped=dropped,
+                        )
+                    except Exception as error:
+                        decision = failed_decision(error)
+                    chosen = page_module.by_cid(files, decision.get("choice") or "")
+                    # The tool's own verb ("upload") is on the risky list; this
+                    # gate judges the target choice, so only the element is
+                    # matched against the patterns (intent="").
+                    status, reason = verdict(
+                        decision,
+                        intent="",
+                        candidate=chosen,
+                        dropped=dropped,
+                        gates=self.gates,
                     )
-                    choice = ((response.get("answers") or {}).get("target") or {}).get("choice")
-                    chosen = next((c for c in files if c["cid"] == choice), None)
-                    if chosen is None:
-                        raise RuntimeError("no file input matched the intent")
+                    step |= {
+                        "decision": decision,
+                        "gate": {"verdict": status, "reason": reason},
+                        "locator": {"selector": None, "unique": False},
+                        "result": {"correct": None, "executed": False, "error": None},
+                    }
+                    if status != AUTO:
+                        return {
+                            "status": status,
+                            "reason": reason,
+                            "executed": False,
+                            "target": (chosen or {}).get("name"),
+                            "step": step,
+                        }
                 else:
                     chosen = files[0]
                 locator = page_module.locator_by_fp(
                     page, chosen["fp"], frame_index=chosen.get("frame", 0)
                 )
             locator.set_input_files(paths)
-            return locator.get_attribute("aria-label") or "file input"
+            if step is not None:
+                step["result"]["executed"] = True
+            return {
+                "status": "auto",
+                "reason": None,
+                "executed": True,
+                "target": locator.get_attribute("aria-label") or "file input",
+                "step": step,
+            }
 
-        label = self.on_page(choose)
-        return {"files": paths, "target": label}
+        outcome = self.on_page(choose)
+        step = outcome.pop("step", None)
+        if step is not None:
+            self._write_step(step)
+        return {"files": paths, **outcome}
 
     def drag(
         self,
@@ -457,36 +532,121 @@ class Session:
             action = field.get("action", "fill")
             value = field.get("value")
             selector = field.get("selector")
+            step = None
             if selector is None and field.get("intent"):
-                selector = self._selector_for_intent(
-                    field["intent"], roles={"textbox", "searchbox", "combobox", "checkbox", "radio"}
+                # Jev chooses the field: that decision goes through the same gate
+                # as browse, instead of acting on whatever it picked.
+                outcome = self._gate_intent(
+                    field["intent"],
+                    roles={"textbox", "searchbox", "combobox", "checkbox", "radio"},
                 )
+                step = outcome["step"]
+                if outcome["status"] != AUTO:
+                    self._write_step(step)
+                    results.append(
+                        {
+                            "intent": field["intent"],
+                            "status": outcome["status"],
+                            "reason": outcome["reason"],
+                            "executed": False,
+                        }
+                    )
+                    continue
+                selector = outcome["selector"]
             if selector is None:
-                raise ValueError(f"field {field!r} needs a selector or an intent")
-            self.on_page(
-                lambda page, sel=selector, act=action, val=value: _apply_field(page, sel, act, val)
+                raise ValueError("every field needs a selector or an intent")
+            try:
+                self.on_page(
+                    lambda page, sel=selector, act=action, val=value: _apply_field(
+                        page, sel, act, val
+                    )
+                )
+            except Exception as error:
+                if step is not None:
+                    step["result"]["error"] = f"{type(error).__name__}: {error}"
+                    self._write_step(step)
+                raise
+            results.append(
+                {"selector": selector, "action": action, "value": value, "executed": True}
             )
-            results.append({"selector": selector, "action": action, "value": value})
+            if step is not None:
+                step["result"]["executed"] = True
+                self._write_step(step)
         return {"filled": results}
 
-    def _selector_for_intent(self, intent: str, *, roles: set[str]) -> str:
-        def choose(page: Any) -> str:
-            candidates, _, _ = page_module.extract(page)
+    def _write_step(self, step: dict[str, Any]) -> None:
+        if self.writer:
+            self.writer.step(**step)
+        self.steps.append(step)
+
+    def _gate_intent(self, intent: str, *, roles: set[str]) -> dict[str, Any]:
+        """Resolve an intent to a selector through the same gate as browse.
+
+        Returns {status, reason, selector, name, step}; the selector is set only
+        when the verdict is AUTO, so a caller must not act on a review/blocked
+        one. The caller writes the step after acting, so its result.executed is
+        the truth.
+        """
+
+        def choose(page: Any) -> dict[str, Any]:
+            candidates, total, dropped = page_module.extract(page, self.max_candidates)
             pool = [c for c in candidates if c["role"] in roles] or candidates
             if not pool:
                 raise RuntimeError(f"nothing to resolve {intent!r} against")
-            question = build_single_question(page, intent, pool)
-            response, _ = self.client.system_one(
-                {"page": f"{page.title()} — {page.url}"}, {"target": question}, model=self.model
+            step = {
+                "step": len(self.steps) + 1,
+                "intent": intent,
+                "action": {"type": "none"},  # replay skips it; the fill itself is the action record
+                "url": page.url,
+                "title": page.title(),
+                "total_on_page": total,
+                "dropped": dropped,
+                "candidates": pool,
+                "expected_cid": None,
+            }
+            try:
+                decision = ask(
+                    self.client,
+                    url=page.url,
+                    title=page.title(),
+                    intent=intent,
+                    candidates=pool,
+                    model=self.model,
+                    total_on_page=total,
+                    dropped=dropped,
+                )
+            except Exception as error:
+                decision = failed_decision(error)
+            chosen = page_module.by_cid(pool, decision.get("choice") or "")
+            status, reason = verdict(
+                decision,
+                intent=intent,
+                candidate=chosen,
+                dropped=dropped,
+                gates=self.gates,
             )
-            choice = ((response.get("answers") or {}).get("target") or {}).get("choice")
-            chosen = next((c for c in pool if c["cid"] == choice), None)
-            if chosen is None:
-                raise RuntimeError(f"no element matched {intent!r}")
-            selector, unique = page_module.locator_for(page, chosen)
-            if not unique:
-                raise RuntimeError(f"{intent!r} resolved to {chosen['name']!r}, which is ambiguous")
-            return selector
+            selector = None
+            if status == AUTO and chosen is not None:
+                selector, unique = page_module.locator_for(page, chosen)
+                if not unique:
+                    status, reason = (
+                        REVIEW,
+                        f"{intent!r} resolved to {chosen['name']!r}, which is ambiguous",
+                    )
+                    selector = None
+            step |= {
+                "decision": decision,
+                "gate": {"verdict": status, "reason": reason},
+                "locator": {"selector": selector, "unique": bool(selector)},
+                "result": {"correct": None, "executed": False, "error": None},
+            }
+            return {
+                "status": status,
+                "reason": reason,
+                "selector": selector,
+                "name": (chosen or {}).get("name"),
+                "step": step,
+            }
 
         return self.on_page(choose)
 
@@ -615,7 +775,7 @@ class Session:
         content_type: str = "application/json",
         abort: bool = False,
     ) -> dict[str, Any]:
-        """Stub or block matching requests (tests only; routes are not part of a trace)."""
+        """Stub or block matching requests (tests only; recorded, not replayed)."""
 
         def handler(route: Any) -> None:
             if abort:
@@ -641,7 +801,7 @@ class Session:
         return {"tracing": True, "screenshots": screenshots}
 
     def trace_stop(self, path: str | None = None) -> dict[str, Any]:
-        target = Path(path or f"jevnav-trace-{int(time.time())}.zip")
+        target = self._check_writable_path(path or f"jevnav-trace-{int(time.time())}.zip")
         target.parent.mkdir(parents=True, exist_ok=True)
         self.on_page(lambda page: page.context.tracing.stop(path=str(target)))
         return {
@@ -680,7 +840,7 @@ class Session:
 
     def heap_snapshot(self, path: str | None = None) -> dict[str, Any]:
         """Write a Chromium heap snapshot (open it in Chrome DevTools > Memory)."""
-        target = Path(path or f"jevnav-heap-{int(time.time())}.heapsnapshot")
+        target = self._check_writable_path(path or f"jevnav-heap-{int(time.time())}.heapsnapshot")
         target.parent.mkdir(parents=True, exist_ok=True)
 
         def dump(page: Any) -> None:
@@ -706,22 +866,28 @@ class Session:
         import subprocess
         import tempfile
 
+        target = url or self.on_page(lambda page: page.url)
+        if urllib.parse.urlsplit(target).scheme not in ("http", "https"):
+            raise ValueError(
+                f"lighthouse needs an http(s) URL (got {target!r}) — v13 refuses file://"
+            )
         if shutil.which("npx") is None:
             raise RuntimeError("lighthouse needs node/npx on PATH")
-        target = url or self.on_page(lambda page: page.url)
         with tempfile.TemporaryDirectory() as tmp:
             report = Path(tmp) / "lighthouse.json"
             process = subprocess.run(
                 [
                     "npx",
                     "-y",
-                    "lighthouse",
-                    target,
+                    # pinned: npx would otherwise fetch and execute whatever
+                    # "latest" is at call time; bump deliberately
+                    f"lighthouse@{LIGHTHOUSE_VERSION}",
                     "--output=json",
                     f"--output-path={report}",
                     "--chrome-flags=--headless=new --no-sandbox",
                     f"--only-categories={categories}",
                     "--quiet",
+                    target,  # http(s) is enforced above, so it cannot be read as a flag
                 ],
                 capture_output=True,
                 text=True,
@@ -735,6 +901,71 @@ class Session:
             for name, data in (payload.get("categories") or {}).items()
         }
         return {"url": target, "scores": scores}
+
+    def record_action(self, tool: str, *, request: dict[str, Any], result: dict[str, Any]) -> None:
+        """One action record per acting-tool call: the evidence, not a decision."""
+        record = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tool": tool,
+            "request": request,
+            "result": result,
+        }
+        if self.writer:
+            self.writer.action(**record)
+        self.actions.append(record)
+
+    def _check_url(self, url: str, *, scheme: str = "goto") -> str:
+        """http(s) only, unless file:// was explicitly allowed at launch.
+
+        Without this, an agent-controlled goto("file:///…") plus the read tools
+        turns the server into a local-file reader; the operator opts in with
+        --allow-file-urls when the fixtures are local.
+        """
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme in ("http", "https") or url == "about:blank":
+            return url
+        if parsed.scheme == "file" and self.allow_file_urls:
+            return url
+        raise ValueError(
+            f"{scheme} accepts http(s) URLs (got {url!r}); pass --allow-file-urls "
+            "at launch to use file:// fixtures"
+        )
+
+    def _check_readable_file(self, path: str) -> Path:
+        """A path an acting tool may read (upload source), inside file_root."""
+        if self._file_root_unbounded:
+            raise ValueError(
+                f"upload_files needs an explicit --file-root when the server runs from "
+                f"{self.file_root} (that root would cover everything)"
+            )
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.file_root / candidate
+        candidate = candidate.resolve()
+        if not candidate.is_relative_to(self.file_root):
+            raise ValueError(
+                f"{path!r} is outside the file root {self.file_root} "
+                "(pass --file-root at launch to widen it)"
+            )
+        return candidate
+
+    def _check_writable_path(self, path: str | Path) -> Path:
+        """A path an acting tool may write to (screenshot, heap snapshot, trace)."""
+        if self._file_root_unbounded:
+            raise ValueError(
+                f"artifacts need an explicit --file-root when the server runs from "
+                f"{self.file_root} (that root would cover everything)"
+            )
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = self.file_root / candidate
+        candidate = candidate.resolve()
+        if not candidate.is_relative_to(self.file_root):
+            raise ValueError(
+                f"{path!r} is outside the file root {self.file_root} "
+                "(pass --file-root at launch to widen it)"
+            )
+        return candidate
 
     def _recorder(self) -> Any:
         if self.browser is not None and self.browser.recorder is not None:
@@ -877,6 +1108,7 @@ class Session:
 
     def goto(self, url: str) -> dict[str, Any]:
         """Open a URL in jevnav's browser (the agent's first move when it has no --start)."""
+        url = self._check_url(url)
         self.on_page(lambda page: page.goto(url, wait_until="domcontentloaded"))
         state = self.page_state()
         return {"url": state["url"], "title": state["title"], "elements": state["elements"]}
@@ -905,7 +1137,10 @@ class Session:
         }
 
     def summary(self) -> dict[str, Any]:
-        return summarize_run(self.steps) if self.steps else {"steps": 0}
+        result = summarize_run(self.steps) if self.steps else {"steps": 0}
+        if self.actions:
+            result["actions"] = len(self.actions)
+        return result
 
 
 def server_class() -> Any:
@@ -936,6 +1171,8 @@ def serve(
     user_agent: str | None = None,
     allow_eval: bool = True,
     max_candidates: int | None = None,
+    file_root: str | None = None,
+    allow_file_urls: bool = False,
 ) -> int:
     try:
         server_class()
@@ -958,6 +1195,8 @@ def serve(
         user_agent=user_agent,
         allow_eval=allow_eval,
         max_candidates=max_candidates,
+        file_root=file_root,
+        allow_file_urls=allow_file_urls,
     )
     mcp = server_class()("jevnav")
 
@@ -983,6 +1222,39 @@ def serve(
             openWorldHint=True,
         )
 
+    def traced(tool: str):
+        """Record one action step per call, so direct primitives are evidence too.
+
+        browse/goal already write decision steps; every other acting tool gets a
+        ``kind: "action"`` record in the same trace.
+        """
+
+        def wrap(function):
+            signature = inspect.signature(function)
+
+            @functools.wraps(function)
+            def wrapper(*args: Any, **kwargs: Any) -> str:
+                try:
+                    result = function(*args, **kwargs)
+                except Exception as error:
+                    session.record_action(
+                        tool,
+                        request=_sanitize_arguments(signature, args, kwargs),
+                        result={"error": f"{type(error).__name__}: {error}"},
+                    )
+                    raise
+                session.record_action(
+                    tool,
+                    request=_sanitize_arguments(signature, args, kwargs),
+                    result={"ok": True},
+                )
+                return result
+
+            wrapper.__jevnav_traced__ = True  # the annotation map is tested against this
+            return wrapper
+
+        return wrap
+
     @mcp.tool(annotations=acts(destructive=True))
     def browse(
         intent: str,
@@ -1001,6 +1273,7 @@ def serve(
         return json.dumps(session.browse(intent, action, value, min_confidence), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(idempotent=True))
+    @traced("goto")
     def goto(url: str) -> str:
         """Open a URL in the current tab, replacing its content, and wait until
         the DOM is ready. Returns {url, title, elements}, where elements is the
@@ -1050,7 +1323,8 @@ def serve(
         for headers and body."""
         return json.dumps(session.network(limit, only_failed), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @mcp.tool(annotations=acts(destructive=True))
+    @traced("screenshot")
     def screenshot(
         path: str | None = None, full_page: bool = False, selector: str | None = None
     ) -> str:
@@ -1060,6 +1334,7 @@ def serve(
         )
 
     @mcp.tool(annotations=acts(destructive=True))
+    @traced("upload_files")
     def upload_files(
         paths: list[str], selector: str | None = None, intent: str | None = None
     ) -> str:
@@ -1071,6 +1346,7 @@ def serve(
         )
 
     @mcp.tool(annotations=acts(destructive=True))
+    @traced("drag")
     def drag(source_selector: str, target_selector: str) -> str:
         """Drag the element at source_selector onto target_selector. The drag
         runs immediately with no confirmation, so a wrong target can change
@@ -1081,6 +1357,7 @@ def serve(
         )
 
     @mcp.tool(annotations=acts(destructive=True))
+    @traced("press_key")
     def press_key(key: str, selector: str | None = None) -> str:
         """Press a key or a combination ("Control+A", "Shift+Enter"). With a
         selector, presses on that element (first match); without, on the page.
@@ -1089,6 +1366,7 @@ def serve(
         return json.dumps(session.press_key(key, selector), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(destructive=True))
+    @traced("fill_form")
     def fill_form(fields_json: str) -> str:
         """Fill several fields in one call. fields_json is a JSON list of
         {selector|intent, value, action?}; action is fill (default), select,
@@ -1111,7 +1389,8 @@ def serve(
         jevnav's own network buffer; nothing is re-requested."""
         return json.dumps(session.network_detail(id, url_contains), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @mcp.tool(annotations=acts(destructive=True))
+    @traced("dialog_policy")
     def dialog_policy(action: str = "accept", match: str | None = None) -> str:
         """Answer dialogs from now on. match=None sets the session default;
         with a match, adds a rule for dialogs whose text contains it (an
@@ -1120,12 +1399,14 @@ def serve(
         return json.dumps(session.dialog_policy(action, match), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(idempotent=True))
+    @traced("resize")
     def resize(width: int, height: int) -> str:
         """Resize the browser viewport to width x height. The size persists for
         the session and can change what the page renders (responsive layout)."""
         return json.dumps(session.resize(width, height), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(idempotent=True))
+    @traced("emulate")
     def emulate(
         color_scheme: str | None = None,
         reduced_motion: str | None = None,
@@ -1150,6 +1431,7 @@ def serve(
         )
 
     @mcp.tool(annotations=acts())
+    @traced("route")
     def route(
         pattern: str,
         status: int = 200,
@@ -1157,8 +1439,9 @@ def serve(
         content_type: str = "application/json",
         abort: bool = False,
     ) -> str:
-        """Stub or block requests matching a URL pattern (testing; routes are
-        not part of a trace). The stub persists until unroute."""
+        """Stub or block requests matching a URL pattern (testing). The stub
+        persists until unroute; the call is recorded as an action, never part
+        of a replay path."""
         return json.dumps(
             session.route(
                 pattern, status=status, body=body, content_type=content_type, abort=abort
@@ -1167,6 +1450,7 @@ def serve(
         )
 
     @mcp.tool(annotations=acts(idempotent=True))
+    @traced("unroute")
     def unroute(pattern: str | None = None) -> str:
         """Remove one route stub, or all of them."""
         return json.dumps(session.unroute(pattern), ensure_ascii=False)
@@ -1176,7 +1460,8 @@ def serve(
         """Chromium performance counters for the current page (CDP)."""
         return json.dumps(session.perf_metrics(), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @mcp.tool(annotations=acts(destructive=True))
+    @traced("heap_snapshot")
     def heap_snapshot(path: str | None = None) -> str:
         """Write a Chromium heap snapshot to a file (default:
         jevnav-heap-<timestamp>.heapsnapshot in the working directory). Chromium
@@ -1185,6 +1470,7 @@ def serve(
         return json.dumps(session.heap_snapshot(path), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(idempotent=True))
+    @traced("lighthouse")
     def lighthouse(
         url: str | None = None, categories: str = "performance,accessibility,best-practices,seo"
     ) -> str:
@@ -1194,11 +1480,13 @@ def serve(
         return json.dumps(session.lighthouse(url, categories=categories), ensure_ascii=False)
 
     @mcp.tool(annotations=acts())
+    @traced("trace_start")
     def trace_start(screenshots: bool = True) -> str:
         """Start a Playwright trace (open it later with `npx playwright show-trace`)."""
         return json.dumps(session.trace_start(screenshots), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @mcp.tool(annotations=acts(destructive=True))
+    @traced("trace_stop")
     def trace_stop(path: str | None = None) -> str:
         """Stop tracing and write the trace zip."""
         return json.dumps(session.trace_stop(path), ensure_ascii=False)
@@ -1228,6 +1516,7 @@ def serve(
         return json.dumps(session.styles(selector, props, limit), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(destructive=True))
+    @traced("read_js")
     def read_js(expression: str) -> str:
         """Evaluate a JS expression in the page and return its value. This is
         arbitrary JavaScript: an expression can change page state, so treat it
@@ -1244,6 +1533,7 @@ def serve(
         return json.dumps(session.wait_for(text, selector, timeout_ms), ensure_ascii=False)
 
     @mcp.tool(annotations=acts())
+    @traced("scroll")
     def scroll(direction: str = "down", amount: int = 800) -> str:
         """Scroll the page down or up by pixels of document height."""
         return json.dumps(session.scroll(direction, amount), ensure_ascii=False)
@@ -1254,17 +1544,20 @@ def serve(
         return json.dumps(session.tabs(), ensure_ascii=False)
 
     @mcp.tool(annotations=acts())
+    @traced("new_page")
     def new_page(url: str | None = None) -> str:
         """Open a new tab (optionally at a URL) and drive it from now on."""
         return json.dumps(session.new_page(url), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(idempotent=True))
+    @traced("select_page")
     def select_page(index: int) -> str:
         """Drive the tab at this index (see tabs). The switch is immediate; the
         tab keeps its state, and an out-of-range index is an error."""
         return json.dumps(session.select_page(index), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(destructive=True))
+    @traced("close_page")
     def close_page(index: int) -> str:
         """Close the tab at this index and keep driving a remaining one."""
         return json.dumps(session.close_page(index), ensure_ascii=False)
@@ -1279,6 +1572,48 @@ def serve(
     finally:
         session.close()
     return 0
+
+
+_MASKED_ARGUMENTS = {"body", "expression", "value", "text", "context_json"}
+
+
+def _sanitize_arguments(signature: Any, args: tuple, kwargs: dict) -> dict[str, Any]:
+    """Tool arguments for the trace: shape yes, typed values and secrets no."""
+    try:
+        bound = signature.bind(*args, **kwargs)
+    except TypeError:
+        return {}
+    bound.apply_defaults()
+    out: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        if name == "fields_json" and isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                parsed = None
+            if not isinstance(parsed, list):
+                out[name] = f"<{len(value)} chars>"
+                continue
+            out[name] = [
+                {
+                    "selector" if "selector" in field else "intent": (
+                        field.get("selector") or field.get("intent")
+                    ),
+                    "action": field.get("action", "fill"),
+                    "value": f"<{len(str(field.get('value', '')))} chars>",
+                }
+                for field in parsed
+                if isinstance(field, dict)
+            ]
+        elif name == "key" and isinstance(value, str) and len(value) == 1:
+            out[name] = "<1 char>"
+        elif name in _MASKED_ARGUMENTS:
+            out[name] = f"<{len(str(value))} chars>"
+        elif isinstance(value, str) and len(value) > 200:
+            out[name] = value[:200] + "…"
+        else:
+            out[name] = value
+    return out
 
 
 def _apply_field(page: Any, selector: str, action: str, value: Any) -> None:
