@@ -143,6 +143,17 @@ class TraceWriter:
         self._write(record)
         return record
 
+    def action(self, **fields: Any) -> dict[str, Any]:
+        """One acting-tool call: what was asked of the page, and how it went.
+
+        Not a decision — there is no candidate set and no model in the loop — so
+        replay skips these records; they exist so a session's evidence includes
+        the direct primitives, not just browse/goal.
+        """
+        record = {"kind": "action", **fields}
+        self._write(record)
+        return record
+
     def close(self) -> None:
         self._fh.close()
 
@@ -161,9 +172,16 @@ class NullWriter:
     def step(self, **fields: Any) -> dict[str, Any]:
         return {"kind": "step", **fields}
 
+    def action(self, **fields: Any) -> dict[str, Any]:
+        return {"kind": "action", **fields}
+
 
 def read_trace(path: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Return (run header, steps). Rejects records that are not steps."""
+    """Return (run header, steps). Action records are evidence, not decisions.
+
+    Replay only understands decision steps; action records (direct primitive
+    calls, `kind: "action"`) are skipped here and readable with read_actions.
+    """
     run: dict[str, Any] = {}
     steps: list[dict[str, Any]] = []
     for line_no, line in enumerate(Path(path).read_text().splitlines(), 1):
@@ -174,11 +192,23 @@ def read_trace(path: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             run = record
         elif record.get("kind") == "step":
             steps.append(record)
-        else:
+        elif record.get("kind") != "action":
             raise ValueError(f"{path}:{line_no}: unknown record kind {record.get('kind')!r}")
     if not steps:
         raise ValueError(f"{path}: no steps in trace")
     return run, steps
+
+
+def read_actions(path: str | Path) -> list[dict[str, Any]]:
+    """The action records in a trace: direct primitive calls, in order."""
+    actions: list[dict[str, Any]] = []
+    for line in Path(path).read_text().splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("kind") == "action":
+            actions.append(record)
+    return actions
 
 
 def iter_fingerprints(step: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:

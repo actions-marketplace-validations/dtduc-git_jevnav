@@ -16,10 +16,10 @@ A coding agent working on a frontend codebase gets two things from jevnav:
 - **Page truth, not pixels.** Structure, computed styles and controls come back
   as facts, and `diff` reports `font-size 32px → 28px` between a mockup and the
   running app — the shape an agent can fix. No screenshots in the decision loop.
-- **Evidence, not confidence.** Every action is a Jev decision with a calibrated
-  probability, risky ones are gated, and the whole run is a trace that `replay`
-  re-checks offline in CI: a site change that breaks a recorded decision exits 1,
-  with no model call and no API key.
+- **Evidence, not confidence.** Every decision is recorded with a calibrated
+  probability, risky ones go to review, and the decision path is a trace that
+  `replay` re-checks offline in CI: a site change that breaks a recorded decision
+  exits 1, with no model call and no API key.
 
 Selector-based tests break the moment a label changes, and LLM browser agents
 are confident, unauditable and occasionally wrong. jevnav sits in between
@@ -32,7 +32,8 @@ are confident, unauditable and occasionally wrong. jevnav sits in between
 2. **Every decision is recorded.** The trace holds the candidates as the model
    saw them, the choice, the probability and the cost — one JSONL file per run.
 3. **Risky actions are gated.** `p` below the threshold, or an intent that looks
-   destructive, goes to a human instead of clicking.
+   destructive, goes to a human instead of clicking — in `browse`, `goal` and
+   `run`, the tools where Jev chooses the action.
 4. **`replay` is the regression test.** Offline, no model call: re-resolve every
    recorded decision against the page as it is now. A site change that breaks a
    target fails CI; everything else is reported as drift, not noise.
@@ -290,38 +291,49 @@ Tools:
 | `page_state()` | URL, title and the shortlist jevnav can see |
 | `summary()` | this session: steps, auto/review/blocked, cost, latency |
 
-**Acting** — everything else an agent needs:
+**Acting** — runs immediately; the MCP annotations tell a host which of these
+change state, and every call lands in the session trace:
 
 | tool | what it does |
 |---|---|
 | `screenshot(path, full_page, selector)` | save a PNG for a human (never used by a decision) |
-| `upload_files(paths, selector, intent)` | set files, on a selector or an input Jev picks |
+| `upload_files(paths, selector, intent)` | set files, on a selector or an input Jev picks (paths must be inside `--file-root`) |
 | `drag(source_selector, target_selector)` | drag one element onto another |
 | `resize(width, height)` | change the viewport |
 | `emulate(color_scheme, media, geolocation, offline, …)` | emulate media, location and connectivity |
 | `press_key(key, selector)` | a key or combination ("Control+A"), optionally on an element |
-| `fill_form(fields_json)` | fill several fields in one call: {selector\|intent, value, action} |
-| `wait_for(text, selector, timeout_ms)` | wait for something to appear |
+| `fill_form(fields_json)` | fill several fields in one call: {selector\|intent, value, action} — an `intent` resolves through the gate |
+| `read_js(expression)` | evaluate JS in the page — arbitrary JavaScript, `--no-eval` disables it |
+| `route(pattern, status, body, abort)` / `unroute(pattern)` | stub or block requests (testing) |
+| `dialog_policy(action, match)` | answer future dialogs: the default, or rules by message text |
+| `trace_start(screenshots)` / `trace_stop(path)` | a Playwright trace zip for `playwright show-trace` |
+| `heap_snapshot(path)` | a Chromium heap snapshot (debug artifact) |
+| `lighthouse(url, categories)` | Lighthouse scores, through a pinned npx version (needs node) |
 | `scroll(direction, amount)` | scroll the document |
-| `tabs()`, `new_page(url)`, `select_page(i)`, `close_page(i)` | work with tabs |
+| `new_page(url)`, `select_page(i)`, `close_page(i)` | work with tabs |
 
-**Inspecting** — the agent's eyes (observation only, never traced):
+The gate covers `browse` and `goal` — the calls where Jev chooses the action —
+plus the `intent` variants of `fill_form` and `upload_files`. Everything else
+runs immediately: a host that wants a human in the loop for `press_key`,
+`fill_form`, `upload_files`, `read_js` or `route` enforces the MCP annotations
+(`destructiveHint`, `openWorldHint`) on its side. Three launch flags set the
+boundary: `--no-eval` disables `read_js`, `--file-root` limits where uploads read
+and artifacts write (default: the working directory), and `goto`/`new_page` accept
+http(s) unless `--allow-file-urls` is passed.
+
+**Inspecting** — the agent's eyes (observation only; readers are not traced):
 
 | tool | what it does |
 |---|---|
 | `console(limit, only_errors)` | recent console messages and page errors |
 | `network(limit, only_failed)` | recent requests, with statuses |
-| `network_detail(index, url_contains)` | one request's headers and body |
+| `network_detail(id, url_contains)` | one request's headers and body (id comes from `network`) |
 | `dialogs()` | alert/confirm/prompt, with the policy or rule that resolved them |
-| `dialog_policy(action, match)` | answer future dialogs: the default, or rules by message text |
-| `read_js(expression)` | evaluate JS in the page |
 | `outline(selector, limit)` | a page or region's structure (tags, headings, text, boxes) |
 | `styles(selector, props, limit)` | computed styles of the matching elements |
-| `route(pattern, status, body, abort)` / `unroute(pattern)` | stub or block requests (testing) |
-| `trace_start()` / `trace_stop(path)` | a Playwright trace zip for `playwright show-trace` |
-| `perf_metrics()`, `heap_snapshot(path)` | Chromium counters and a heap snapshot (best-effort: for real profiling use chrome-devtools) |
-| `emulate(cpu_throttle, network_conditions, …)` | CPU throttling and Slow-3G-style profiles (chromium, via CDP) |
-| `lighthouse(url, categories)` | Lighthouse scores, through npx (best-effort: needs node) |
+| `perf_metrics()` | Chromium performance counters (CDP) |
+| `wait_for(text, selector, timeout_ms)` | wait for something to appear |
+| `tabs()` | list the open pages and which one jevnav is driving |
 
 Wire it into a client (this JSON shape is what Cursor, Claude Desktop and VS
 Code use; Claude Code also accepts
@@ -339,11 +351,14 @@ Code use; Claude Code also accepts
 }
 ```
 
-Why an agent would: it does not need its own Playwright MCP, it cannot click a
-`Delete` by accident (`review` never executes; risky-action patterns ship for
-nine languages, and extend them in `gates.yaml`), and its whole session is a
-trace that `jevnav replay --execute` can re-run in CI. Cost is about
-**$0.00004 and 330ms per step**; `page_state` and `goto` are free.
+Why an agent would: it does not need its own Playwright MCP, `browse`/`goal`
+cannot click a `Delete` by accident (`review` never executes; risky-action
+patterns ship for nine languages, and extend them in `gates.yaml`), every
+decision is replayable with `jevnav replay --execute`, and every acting call is
+evidence in the same trace.
+Cost is about **$0.00004 and 330ms per step**; `page_state` and `goto` are free.
+Every tool declares its MCP annotations — read-only, destructive, idempotent,
+open-world — so a client can see which calls change state before making them.
 
 ### Dialogs: answered by rule, not parked
 
@@ -359,7 +374,7 @@ dialog with the rule that fired, so the run stays auditable.
 |---|---|---|---|
 | who picks the element | a human writes selectors | the LLM, from a snapshot | **Jev**, with a calibrated probability |
 | scope | the full test-authoring API | 29 tools, primitives + profiling | 33 tools, intent-level acting + observation |
-| risky actions | whatever the test says | whatever the LLM says | **never executed** until a human says so (risky patterns cover English, Vietnamese, German, French, Spanish, Portuguese, Japanese, Chinese and Korean) |
+| risky actions | whatever the test says | whatever the LLM says | **never executed by `browse`/`goal`** until a human says so (risky patterns cover nine languages); direct primitives run immediately and are annotated |
 | regression evidence | trace viewer, re-run the test | none | **decision trace + offline replay that exits 1** |
 | outcome assertion | `expect(...)` | none | `--success` selector, verified or reported unverified |
 | engines | chromium, firefox, webkit | chromium | chromium, firefox, webkit (`--browser`) |

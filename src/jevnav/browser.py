@@ -14,6 +14,7 @@ Chrome has locked.
 
 from __future__ import annotations
 
+import itertools
 import time
 from collections import deque
 from collections.abc import Iterator
@@ -38,9 +39,12 @@ class PageRecorder:
         page: Any,
         *,
         dialog_policy: str = "dismiss",
+        network_seq: Any = None,
     ) -> None:
         self.console: deque[dict[str, Any]] = deque(maxlen=RING)
         self.network: deque[dict[str, Any]] = deque(maxlen=RING)
+        # shared across tabs when the BrowserThread supplies one
+        self._network_seq = network_seq if network_seq is not None else itertools.count(1)
         self.dialogs: deque[dict[str, Any]] = deque(maxlen=20)
         self.dialog_policy = dialog_policy
         self.dialog_rules: list[tuple[str, str]] = []  # (message substring, accept|dismiss)
@@ -58,10 +62,15 @@ class PageRecorder:
     def _pageerror(self, error: Any) -> None:
         self.console.append({"type": "pageerror", "text": str(error)[:500]})
 
+    def _next_network_id(self) -> int:
+        """A monotonic id: buffer positions shift once the ring is full."""
+        return next(self._network_seq)
+
     def _response(self, response: Any) -> None:
         request = response.request
         self.network.append(
             {
+                "id": self._next_network_id(),
                 "method": request.method,
                 "url": request.url[:300],
                 "status": response.status,
@@ -74,6 +83,7 @@ class PageRecorder:
     def _failed(self, request: Any) -> None:
         self.network.append(
             {
+                "id": self._next_network_id(),
                 "method": request.method,
                 "url": request.url[:300],
                 "status": None,
@@ -159,21 +169,34 @@ class PageRecorder:
         return items[-limit:]
 
     def network_tail(self, limit: int = 20, only_failed: bool = False) -> list[dict[str, Any]]:
-        items = list(self.network)
+        """Serializable view of the newest requests, each with a stable id.
+
+        The recorder keeps the Playwright request/response objects for
+        network_detail; they never leave this method (the MCP layer json-dumps
+        what it returns). The id is monotonic, so it stays valid in a later
+        network_detail call even after the ring buffer drops old entries.
+        """
+        entries = list(self.network)
         if only_failed:
-            items = [item for item in items if item["status"] is None or item["status"] >= 400]
-        return items[-limit:]
+            entries = [e for e in entries if e["status"] is None or e["status"] >= 400]
+        fields = ("id", "method", "url", "status", "resource", "error")
+        return [{key: entry[key] for key in fields if key in entry} for entry in entries[-limit:]]
 
     def network_detail(
-        self, *, index: int | None = None, url_contains: str | None = None
+        self, *, id: int | None = None, url_contains: str | None = None
     ) -> dict[str, Any]:
         """Headers and (text) body for one recorded request, newest match first."""
         entries = list(self.network)
         if not entries:
             raise RuntimeError("no requests recorded yet")
         entry = None
-        if index is not None:
-            entry = entries[index]
+        if id is not None:
+            for candidate in reversed(entries):
+                if candidate.get("id") == id:
+                    entry = candidate
+                    break
+            if entry is None:
+                raise RuntimeError(f"no recorded request with id {id}")
         elif url_contains:
             for candidate in reversed(entries):
                 if url_contains in candidate["url"]:
@@ -214,8 +237,8 @@ class PageRecorder:
         }
 
 
-def attach(page: Any, *, dialog_policy: str = "dismiss") -> PageRecorder:
-    return PageRecorder(page, dialog_policy=dialog_policy)
+def attach(page: Any, *, dialog_policy: str = "dismiss", network_seq: Any = None) -> PageRecorder:
+    return PageRecorder(page, dialog_policy=dialog_policy, network_seq=network_seq)
 
 
 def pick_attached_page(context: Any) -> Any:
@@ -239,6 +262,7 @@ def browser_and_recorder(
     cdp: str | None = None,
     viewport: dict[str, int] | None = None,
     dialog_policy: str = "dismiss",
+    network_seq: Any = None,
     engine: str = "chromium",
     locale: str | None = None,
     timezone: str | None = None,
@@ -272,7 +296,7 @@ def browser_and_recorder(
             try:
                 yield (
                     page,
-                    attach(page, dialog_policy=dialog_policy),
+                    attach(page, dialog_policy=dialog_policy, network_seq=network_seq),
                 )
             finally:
                 browser.close()  # disconnects; the browser you attached to keeps running
@@ -288,7 +312,7 @@ def browser_and_recorder(
             try:
                 yield (
                     page,
-                    attach(page, dialog_policy=dialog_policy),
+                    attach(page, dialog_policy=dialog_policy, network_seq=network_seq),
                 )
             finally:
                 context.close()
@@ -299,7 +323,7 @@ def browser_and_recorder(
             page = context.new_page()
             yield (
                 page,
-                attach(page, dialog_policy=dialog_policy),
+                attach(page, dialog_policy=dialog_policy, network_seq=network_seq),
             )
         finally:
             browser.close()

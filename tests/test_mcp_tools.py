@@ -1,5 +1,8 @@
 """The observability side: console, network, dialogs, read_js, tabs, scroll."""
 
+import json
+from pathlib import Path
+
 import pytest
 from helpers import FakeJev, fixture_url
 
@@ -14,12 +17,14 @@ def live_session(page, app_url, tmp_path):
         trace=str(tmp_path / "session.trace.jsonl"),
         client=FakeJev({}).client(),
         page=page,
+        file_root=tmp_path,
     )
     yield instance
     instance.close()
 
 
 def make_session(page, tmp_path, **kwargs):
+    kwargs.setdefault("file_root", tmp_path)
     return Session(
         start=None,
         trace=str(tmp_path / "s.trace.jsonl"),
@@ -59,7 +64,89 @@ def test_network_collects_requests(page, tmp_path):
     page.goto(fixture_url("loop-app.html"))
     requests = session.network(limit=20)["requests"]
     assert any("loop-app.html" in r["url"] for r in requests)
+    # The MCP layer json-dumps this: Playwright objects must not leak, and the
+    # id must be the one network_detail accepts.
+    json.dumps(requests)
+    entry = next(r for r in requests if "loop-app.html" in r["url"])
+    detail = session.network_detail(id=entry["id"])
+    assert detail["url"] == entry["url"]
     session.close()
+
+
+def fake_request(recorder, url: str, status: int | None) -> dict:
+    entry = {
+        "id": recorder._next_network_id(),
+        "method": "GET",
+        "url": url,
+        "status": status,
+        "resource": "document",
+        "request": None,
+        "response": None,
+    }
+    recorder.network.append(entry)
+    return entry
+
+
+def test_network_ids_survive_only_failed_filtering(page, tmp_path):
+    session = make_session(page, tmp_path)
+    recorder = session._recorder()
+    ok = fake_request(recorder, "https://example.test/ok", 200)
+    broken = fake_request(recorder, "https://example.test/broken", 500)
+    failed = session.network(limit=5, only_failed=True)["requests"]
+    assert [entry["id"] for entry in failed] == [broken["id"]]
+    detail = session.network_detail(id=broken["id"])
+    assert detail["url"] == "https://example.test/broken"
+    assert session.network_detail(id=ok["id"])["status"] == 200
+    session.close()
+
+
+def test_network_ids_stay_monotonic_when_the_ring_drops_old_entries(page, tmp_path):
+    session = make_session(page, tmp_path)
+    recorder = session._recorder()
+    first = fake_request(recorder, "https://example.test/first", 200)
+    for i in range(250):  # RING is 200: the first entry is long gone
+        fake_request(recorder, f"https://example.test/{i}", 200)
+    tail = session.network(limit=5)["requests"]
+    assert [entry["url"] for entry in tail] == [
+        f"https://example.test/{i}" for i in range(245, 250)
+    ]
+    assert all(entry["id"] > first["id"] for entry in tail)
+    with pytest.raises(RuntimeError, match="no recorded request with id"):
+        session.network_detail(id=first["id"])
+    session.close()
+
+
+def test_recorder_follows_the_active_tab(tmp_path):
+    """A tab switch must not keep reading the previous tab's buffers."""
+    session = Session(
+        start=None,
+        trace=str(tmp_path / "s.trace.jsonl"),
+        client=FakeJev({}).client(),
+        file_root=tmp_path,
+        allow_file_urls=True,
+    )
+    try:
+        session.goto(fixture_url("loop-app.html"))
+        first = session._recorder()
+        first_ids = [entry["id"] for entry in first.network]
+        assert first_ids, "the first tab recorded its page load"
+        session.new_page()
+        second = session._recorder()
+        assert second is not first
+        assert session.network(limit=5)["requests"] == []  # fresh tab, fresh buffer
+        session.goto(fixture_url("loop-app.html"))
+        second_ids = [entry["id"] for entry in second.network]
+        assert second_ids, "the second tab recorded its own page load"
+        assert min(second_ids) > max(first_ids)  # ids keep counting across tabs
+        session.select_page(0)
+        assert session._recorder() is first  # reused, not re-attached
+        assert [entry["id"] for entry in first.network] == first_ids  # history intact
+        session.goto(fixture_url("loop-app.html"))
+        added = len(first.network) - len(first_ids)
+        # one entry per request: double listeners would record each request twice
+        assert added == len(second_ids)
+    finally:
+        session.close()
 
 
 def test_a_dialog_is_recorded_not_swallowed(page, tmp_path):
@@ -230,18 +317,27 @@ def test_heap_snapshot_writes_a_file(page, tmp_path):
 
 def test_lighthouse_scores_when_npx_is_available(page, tmp_path):
     import shutil
+    import threading
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
     if shutil.which("npx") is None:
         pytest.skip("npx is not installed")
-    session = make_session(page, tmp_path)
+    handler = partial(SimpleHTTPRequestHandler, directory=str(Path(__file__).parent / "fixtures"))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        scores = session.lighthouse(fixture_url("loop-app.html"), categories="performance")[
-            "scores"
-        ]
-    except RuntimeError as error:  # offline or lighthouse refused
-        pytest.skip(f"lighthouse did not run: {error}")
-    assert "performance" in scores
-    session.close()
+        session = make_session(page, tmp_path)
+        try:
+            scores = session.lighthouse(
+                f"http://127.0.0.1:{server.server_port}/loop-app.html", categories="performance"
+            )["scores"]
+        except RuntimeError as error:  # offline, no chrome, lighthouse refused
+            pytest.skip(f"lighthouse did not run: {error}")
+        assert "performance" in scores
+        session.close()
+    finally:
+        server.shutdown()
 
 
 def test_press_key_with_a_modifier(page, tmp_path):
@@ -276,6 +372,14 @@ def test_fill_form_fills_several_fields_at_once(page, tmp_path):
     assert page.input_value("#b") == "second"
     assert page.is_checked("#c") is True
     assert page.input_value("#d") == "two"
+    # check accepts the true-like strings a model actually sends; anything else clears
+    page.set_content("<input id=x type=checkbox>")
+    for truthy in ("yes", "1", "on", True, None):
+        page.uncheck("#x")
+        session.fill_form([{"selector": "#x", "action": "check", "value": truthy}])
+        assert page.is_checked("#x") is True, truthy
+    session.fill_form([{"selector": "#x", "action": "check", "value": "off"}])
+    assert page.is_checked("#x") is False
     session.close()
 
 
@@ -422,3 +526,137 @@ def test_max_candidates_limits_what_the_model_sees(page, tmp_path):
     criteria = fake.calls[0]["questions"]["target"]["criteria"]
     assert len(criteria) == 3  # two candidates + none
     session.close()
+
+
+def test_goto_rejects_file_urls_without_the_opt_in(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(ValueError, match="allow-file-urls"):
+        session.goto(fixture_url("loop-app.html"))
+    session.close()
+
+
+def test_upload_files_refuses_paths_outside_the_file_root(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<input id=f type=file>")
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="outside the file root"):
+        session.upload_files([str(outside)])
+    session.close()
+
+
+def test_screenshot_refuses_a_path_outside_the_file_root(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<h1>x</h1>")
+    with pytest.raises(ValueError, match="outside the file root"):
+        session.screenshot(str(tmp_path.parent / "shot.png"))
+    session.close()
+
+
+def test_lighthouse_rejects_a_non_http_url(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(ValueError, match="http"):
+        session.lighthouse("file:///tmp/audit.html")
+    session.close()
+
+
+def test_fill_form_intent_goes_through_the_gate(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.client = FakeJev({"work email": "work email"}, confidence=0.4).client()
+    page.set_content("<label for=w>Work email</label><input id=w>")
+    out = session.fill_form([{"intent": "type the work email", "value": "a@b.c"}])
+    entry = out["filled"][0]
+    assert entry["status"] == "review" and entry["executed"] is False
+    assert page.input_value("#w") == ""  # nothing was typed
+    session.close()
+
+
+def test_fill_form_intent_risky_pattern_is_reviewed(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.client = FakeJev({"delete": "Delete account"}).client()
+    page.set_content("<label for=w>Delete account</label><input id=w>")
+    out = session.fill_form([{"intent": "delete the account", "value": "x"}])
+    assert out["filled"][0]["status"] == "review"
+    assert out["filled"][0]["executed"] is False
+    session.close()
+
+
+def test_new_page_rejects_file_urls_without_the_opt_in(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(ValueError, match="allow-file-urls"):
+        session.new_page("file:///tmp/page.html")
+    session.close()
+
+
+def test_upload_files_resolves_relative_paths_under_the_root(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<input id=f type=file>")
+    (tmp_path / "cv.pdf").write_text("pdf", encoding="utf-8")
+    out = session.upload_files(["cv.pdf"])
+    assert out["files"] == [str((tmp_path / "cv.pdf").resolve())]
+    session.close()
+
+
+def test_upload_files_refuses_a_symlink_out_of_the_root(page, tmp_path):
+    session = make_session(page, tmp_path)
+    page.set_content("<input id=f type=file>")
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+    (tmp_path / "link.txt").symlink_to(outside)
+    with pytest.raises(ValueError, match="outside the file root"):
+        session.upload_files(["link.txt"])
+    session.close()
+
+
+def test_upload_files_refuses_an_unbounded_default_root(page, tmp_path, monkeypatch):
+    monkeypatch.chdir(Path.home())
+    session = make_session(page, tmp_path)
+    session.file_root = Path.home().resolve()
+    session._file_root_unbounded = True
+    page.set_content("<input id=f type=file>")
+    (tmp_path / "cv.pdf").write_text("pdf", encoding="utf-8")
+    with pytest.raises(ValueError, match="explicit --file-root"):
+        session.upload_files([str(tmp_path / "cv.pdf")])
+    session.close()
+
+
+def test_screenshot_refuses_an_unbounded_default_root(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session._file_root_unbounded = True
+    page.set_content("<h1>x</h1>")
+    with pytest.raises(ValueError, match="explicit --file-root"):
+        session.screenshot()
+    session.close()
+
+
+def test_upload_files_intent_is_gated_and_stepped(page, tmp_path):
+    session = make_session(page, tmp_path)
+    session.client = FakeJev({"the resume": "Resume"}, confidence=0.4).client()
+    page.set_content(
+        '<input id=a type=file aria-label="Resume"><input id=b type=file aria-label="Cover">'
+    )
+    (tmp_path / "cv.pdf").write_text("pdf", encoding="utf-8")
+    out = session.upload_files([str(tmp_path / "cv.pdf")], intent="attach the resume")
+    assert out["status"] == "review" and out["executed"] is False
+    assert len(session.steps) == 1
+    step = session.steps[0]
+    assert step["intent"] == "attach the resume"
+    assert step["gate"]["verdict"] == "review"
+    assert step["result"]["executed"] is False
+    session.close()
+
+
+def test_replay_execute_handles_an_intent_resolve_step(page, tmp_path):
+    """An intent-gate decision must not break `replay --execute`."""
+    from jevnav.replay import replay_trace
+
+    session = make_session(page, tmp_path, allow_file_urls=True)
+    session.client = FakeJev({"you@example.com": "Email"}).client()
+    session.goto(fixture_url("loop-app.html"))
+    out = session.fill_form([{"intent": "type into the you@example.com field", "value": "a@b.c"}])
+    assert out["filled"][0]["executed"] is True
+    session.close()
+
+    result = replay_trace(str(tmp_path / "s.trace.jsonl"), page=page, execute=True)
+    assert result["failed"] == []
+    assert result["counts"].get("error", 0) == 0

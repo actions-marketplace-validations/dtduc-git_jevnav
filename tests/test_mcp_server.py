@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -85,20 +86,36 @@ def run_in_thread(coroutine) -> Any:
     return box["value"]
 
 
-async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) -> list[str]:
-    from mcp import ClientSession, StdioServerParameters, stdio_client
+def server_params(fake_endpoint: str, trace: Path):
+    from mcp import StdioServerParameters
 
     env = {
         **os.environ,
         "TYPESAFE_BASE_URL": fake_endpoint,
         "TYPESAFE_API_KEY": "test-key",
     }
-    params = StdioServerParameters(
+    return StdioServerParameters(
         command=sys.executable,
-        args=["-m", "jevnav", "mcp", "--trace", str(trace)],
+        args=["-m", "jevnav", "mcp", "--trace", str(trace), "--allow-file-urls"],
         env=env,
         cwd=str(REPO),
     )
+
+
+async def list_tool_annotations(fake_endpoint: str, trace: Path) -> dict[str, Any]:
+    from mcp import ClientSession, stdio_client
+
+    async with stdio_client(server_params(fake_endpoint, trace)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = (await session.list_tools()).tools
+    return {tool.name: tool.annotations for tool in tools}
+
+
+async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) -> list[str]:
+    from mcp import ClientSession, stdio_client
+
+    params = server_params(fake_endpoint, trace)
     outcomes: list[str] = []
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -109,6 +126,94 @@ async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) 
                 result = await session.call_tool(name, arguments)
                 outcomes.append(result.content[0].text)
     return outcomes
+
+
+# tool name -> (read_only, destructive, idempotent, open_world)
+# The whole table is pinned: a mapping change must be deliberate.
+ANNOTATIONS: dict[str, tuple[bool, bool, bool, bool]] = {
+    "browse": (False, True, False, True),
+    "close_page": (False, True, False, True),
+    "console": (True, False, True, False),
+    "dialog_policy": (False, True, False, True),
+    "dialogs": (True, False, True, False),
+    "drag": (False, True, False, True),
+    "emulate": (False, False, True, True),
+    "fill_form": (False, True, False, True),
+    "goal": (False, True, False, True),
+    "goto": (False, False, True, True),
+    "heap_snapshot": (False, True, False, True),
+    "lighthouse": (False, False, True, True),
+    "network": (True, False, True, False),
+    "network_detail": (True, False, True, False),
+    "new_page": (False, False, False, True),
+    "outline": (True, False, True, True),
+    "page_state": (True, False, True, True),
+    "perf_metrics": (True, False, True, True),
+    "press_key": (False, True, False, True),
+    "read_js": (False, True, False, True),
+    "resize": (False, False, True, True),
+    "route": (False, False, False, True),
+    "screenshot": (False, True, False, True),
+    "scroll": (False, False, False, True),
+    "select_page": (False, False, True, True),
+    "styles": (True, False, True, True),
+    "summary": (True, False, True, False),
+    "tabs": (True, False, True, True),
+    "trace_start": (False, False, False, True),
+    "trace_stop": (False, True, False, True),
+    "unroute": (False, False, True, True),
+    "upload_files": (False, True, False, True),
+    "wait_for": (True, False, True, True),
+}
+
+
+def hint(ann: Any, key: str) -> bool | None:
+    """Read a ToolAnnotations field, whichever casing this mcp version uses."""
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
+    for name in (key, snake):
+        if hasattr(ann, name):
+            return getattr(ann, name)
+    raise AssertionError(f"no {key} on {ann!r}")
+
+
+def test_every_tool_declares_mcp_annotations(fake_endpoint, tmp_path):
+    """TDQS reads the schema: every tool must say what it does to its world."""
+    annotations = run_in_thread(
+        list_tool_annotations(fake_endpoint, tmp_path / "session.trace.jsonl")
+    )
+    assert set(annotations) == set(ANNOTATIONS)
+    found = {}
+    for name, ann in annotations.items():
+        assert ann is not None, f"{name} has no annotations"
+        found[name] = (
+            hint(ann, "readOnlyHint"),
+            hint(ann, "destructiveHint"),
+            hint(ann, "idempotentHint"),
+            hint(ann, "openWorldHint"),
+        )
+    assert found == ANNOTATIONS
+
+
+async def drive_network_by_id(fake_endpoint: str, trace: Path) -> tuple[dict, dict]:
+    from mcp import ClientSession, stdio_client
+
+    async with stdio_client(server_params(fake_endpoint, trace)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            await session.call_tool("goto", {"url": fixture_url("loop-app.html")})
+            net = json.loads((await session.call_tool("network", {"limit": 5})).content[0].text)
+            entry = next(r for r in net["requests"] if "loop-app.html" in r["url"])
+            raw = await session.call_tool("network_detail", {"id": entry["id"]})
+            detail = json.loads(raw.content[0].text)
+    return entry, detail
+
+
+def test_network_detail_by_id_over_mcp(fake_endpoint, tmp_path):
+    """The id network returns must resolve through a second MCP call."""
+    entry, detail = run_in_thread(
+        drive_network_by_id(fake_endpoint, tmp_path / "session.trace.jsonl")
+    )
+    assert detail["url"] == entry["url"]
 
 
 def test_mcp_server_lists_tools_and_drives_a_goal(fake_endpoint, tmp_path):
@@ -147,9 +252,12 @@ def test_mcp_server_lists_tools_and_drives_a_goal(fake_endpoint, tmp_path):
     summary = json.loads(outcomes[4])
     assert summary["steps"] == 3
     assert summary["auto"] == 2
-    run, steps = json.loads(trace.read_text().splitlines()[0]), trace.read_text().splitlines()[1:]
-    assert run["flow"] == "mcp-session"
+    records = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert records[0]["flow"] == "mcp-session"
+    steps = [r for r in records if r.get("kind") == "step"]
+    actions = [r for r in records if r.get("kind") == "action"]
     assert len(steps) == 3
+    assert [a["tool"] for a in actions] == ["goto"]  # primitives are evidence too
 
 
 def test_mcp_browse_returns_a_playwright_selector(fake_endpoint, tmp_path):
@@ -166,3 +274,75 @@ def test_mcp_browse_returns_a_playwright_selector(fake_endpoint, tmp_path):
     browse = json.loads(outcomes[2])
     assert browse["target"]["selector"] == 'role=button[name="Sign in"]'
     assert browse["status"] in {"auto", "review"}
+
+
+def test_acting_tool_calls_are_recorded_in_the_trace(fake_endpoint, tmp_path):
+    """The evidence promise: every acting call lands in the trace, values masked."""
+    trace = tmp_path / "session.trace.jsonl"
+    run_in_thread(
+        drive(
+            fake_endpoint,
+            trace,
+            [
+                ("goto", {"url": fixture_url("loop-app.html")}),
+                (
+                    "fill_form",
+                    {
+                        "fields_json": json.dumps(
+                            [{"selector": "#login-email", "value": "secret@example.com"}]
+                        )
+                    },
+                ),
+                ("press_key", {"key": "Tab"}),
+                ("page_state", {}),  # a reader: no action record
+            ],
+        )
+    )
+    text = trace.read_text(encoding="utf-8")
+    actions = [json.loads(line) for line in text.splitlines() if '"kind": "action"' in line]
+    assert [action["tool"] for action in actions] == ["goto", "fill_form", "press_key"]
+    assert actions[1]["request"]["fields_json"] == [
+        {"selector": "#login-email", "action": "fill", "value": "<18 chars>"}
+    ]
+    assert actions[2]["request"]["key"] == "Tab"  # named keys stay readable
+    assert "secret@example.com" not in text  # typed values stay out of the trace
+
+
+def test_single_character_keys_are_masked_in_the_trace(fake_endpoint, tmp_path):
+    trace = tmp_path / "session.trace.jsonl"
+    run_in_thread(
+        drive(
+            fake_endpoint,
+            trace,
+            [
+                ("goto", {"url": fixture_url("loop-app.html")}),
+                ("press_key", {"key": "s"}),
+            ],
+        )
+    )
+    actions = [
+        json.loads(line) for line in trace.read_text().splitlines() if '"kind": "action"' in line
+    ]
+    assert actions[-1]["request"]["key"] == "<1 char>"
+
+
+async def drive_error(fake_endpoint: str, trace: Path, name: str, args: dict) -> None:
+    from mcp import ClientSession, stdio_client
+
+    async with stdio_client(server_params(fake_endpoint, trace)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            try:
+                await session.call_tool(name, args)
+            except Exception:  # the tool failed; the trace record is the point
+                pass
+
+
+def test_failed_acting_calls_are_recorded_with_their_error(fake_endpoint, tmp_path):
+    trace = tmp_path / "session.trace.jsonl"
+    run_in_thread(drive_error(fake_endpoint, trace, "goto", {"url": "ftp://example.com"}))
+    actions = [
+        json.loads(line) for line in trace.read_text().splitlines() if '"kind": "action"' in line
+    ]
+    assert actions and actions[0]["tool"] == "goto"
+    assert "http" in actions[0]["result"]["error"]

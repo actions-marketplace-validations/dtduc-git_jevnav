@@ -36,11 +36,11 @@ dependencies = [
   "playwright>=1.49",
   "pyyaml>=6.0",
   "jevassert>=0.2,<0.3",
-  "mcp>=1.2",
+  "mcp>=1.28.1",
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2"]
+mcp = ["mcp>=1.28.1"]
 
 [project.scripts]
 jevnav = "jevnav.cli:main"
@@ -67,7 +67,7 @@ packages = ["src/jevnav"]
 dev = [
   "pytest>=8.0",
   "ruff>=0.5",
-  "mcp>=1.2",
+  "mcp>=1.28.1",
 ]
 
 [tool.ruff]
