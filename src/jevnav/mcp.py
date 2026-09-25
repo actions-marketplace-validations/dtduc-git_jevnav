@@ -10,6 +10,7 @@ and the agent (or the human behind it) decides what to do.
 
 from __future__ import annotations
 
+import itertools
 import json
 import queue
 import threading
@@ -71,6 +72,8 @@ class BrowserThread:
         self._error: BaseException | None = None
         self._page: Any = None
         self.recorder: Any = None
+        self._recorders: dict[Any, Any] = {}  # one per page: no double listeners
+        self._network_seq = itertools.count(1)  # ids never repeat across tabs
         self._dialog_policy = dialog_policy
         self._browser_options = {
             "engine": engine,
@@ -100,10 +103,12 @@ class BrowserThread:
                         user_data_dir=user_data_dir,
                         cdp=cdp,
                         dialog_policy=self._dialog_policy,
+                        network_seq=self._network_seq,
                         **self._browser_options,
                     )
                 )
                 self._page, self.recorder = page, recorder
+                self._recorders[page] = recorder
             except BaseException as error:  # surfaced in the caller's thread
                 self._error = error
                 self._ready.set()
@@ -121,15 +126,34 @@ class BrowserThread:
                 finally:
                     box["done"].set()
 
+    def _recorder_for(self, page: Any) -> Any:
+        """The recorder for one page, reused when a tab is selected again.
+
+        Attaching twice would double every listener (console, network, dialogs)
+        and lose the tab's earlier history. Closed pages are dropped first: a
+        recorder holds live Playwright handles and ring buffers.
+        """
+        from .browser import attach
+
+        for closed in [candidate for candidate in self._recorders if candidate.is_closed()]:
+            del self._recorders[closed]
+        recorder = self._recorders.get(page)
+        if recorder is None:
+            recorder = attach(
+                page,
+                dialog_policy=self._dialog_policy,
+                network_seq=self._network_seq,
+            )
+            self._recorders[page] = recorder
+        return recorder
+
     def switch_page(self, chooser: Callable[[Any], Any]) -> Any:
         """Change which page the session drives, in the thread that owns it (tabs)."""
 
         def job(page: Any) -> Any:
-            from .browser import attach
-
             new_page = chooser(page)
             self._page = new_page
-            self.recorder = attach(new_page, dialog_policy=self._dialog_policy)
+            self.recorder = self._recorder_for(new_page)
             return new_page
 
         return self.call(job)
@@ -232,7 +256,10 @@ class Session:
         """Run one browser operation, launching the browser the first time it is needed."""
         if self.browser is not None:
             return self.browser.call(
-                lambda page: (self.recorder and self.recorder.due_dialog(), function(page))[1]
+                lambda page: (
+                    self.browser.recorder and self.browser.recorder.due_dialog(),
+                    function(page),
+                )[1]
             )
         if self.page is None:
             self.browser = BrowserThread(**self._browser_kwargs)
@@ -422,7 +449,8 @@ class Session:
 
         ``fields`` is a list of ``{"selector"|"intent", "value", "action"?}`` where
         action is fill (default), select, check or type. An ``intent`` is resolved
-        by Jev against the file/text inputs the page shows.
+        by Jev against the page's text, search, combobox, checkbox and radio
+        inputs — or, when the page has none of those, any interactive element.
         """
         results: list[dict[str, Any]] = []
         for field in fields:
@@ -463,10 +491,17 @@ class Session:
         return self.on_page(choose)
 
     def network_detail(
-        self, index: int | None = None, url_contains: str | None = None
+        self, id: int | None = None, url_contains: str | None = None
     ) -> dict[str, Any]:
-        """Headers and body of one recorded request (newest match when filtering by URL)."""
-        return self._recorder().network_detail(index=index, url_contains=url_contains)
+        """Headers and body of one recorded request (newest match when filtering by URL).
+
+        Reading the body is a Playwright call, so it must run on the browser
+        thread like every other page operation — calling it from the MCP
+        handler thread raises a greenlet error.
+        """
+        return self.on_page(
+            lambda page: self._recorder().network_detail(id=id, url_contains=url_contains)
+        )
 
     def dialog_policy(self, action: str = "accept", match: str | None = None) -> dict[str, Any]:
         """Answer dialogs from now on: the session default, or a rule by message text.
@@ -702,6 +737,9 @@ class Session:
         return {"url": target, "scores": scores}
 
     def _recorder(self) -> Any:
+        if self.browser is not None and self.browser.recorder is not None:
+            # a tab switch attaches a fresh recorder; never read the old tab's
+            return self.browser.recorder
         if self.recorder is None:
             self.on_page(lambda page: None)  # launches the browser if it is not up yet
         return self.recorder
@@ -964,7 +1002,10 @@ def serve(
 
     @mcp.tool(annotations=acts(idempotent=True))
     def goto(url: str) -> str:
-        """Open a URL in jevnav's browser and report what is on the page."""
+        """Open a URL in the current tab, replacing its content, and wait until
+        the DOM is ready. Returns {url, title, elements}, where elements is the
+        number of interactive elements found; call page_state for the candidate
+        list."""
         return json.dumps(session.goto(url), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(destructive=True))
@@ -994,12 +1035,19 @@ def serve(
 
     @mcp.tool(annotations=reads(open_world=False))
     def console(limit: int = 20, only_errors: bool = False) -> str:
-        """Recent console messages and page errors (observation only, never traced)."""
+        """Recent console messages and page errors, newest last (observation
+        only; not part of a trace). Returns {messages:[{type, text}]}, where
+        type is the console method (log, info, warning, error, debug, ...) or
+        pageerror; only_errors keeps warning, error and pageerror. Read it
+        after an action to see what the page complained about."""
         return json.dumps(session.console(limit, only_errors), ensure_ascii=False)
 
     @mcp.tool(annotations=reads(open_world=False))
     def network(limit: int = 20, only_failed: bool = False) -> str:
-        """Recent network requests; only_failed keeps 4xx/5xx and transport errors."""
+        """Recent network requests, newest last; only_failed keeps 4xx/5xx and
+        transport errors. Each entry carries method, url, status, resource,
+        error (for failed requests) and id — pass that id to network_detail
+        for headers and body."""
         return json.dumps(session.network(limit, only_failed), ensure_ascii=False)
 
     @mcp.tool(annotations=acts())
@@ -1034,12 +1082,22 @@ def serve(
 
     @mcp.tool(annotations=acts(destructive=True))
     def press_key(key: str, selector: str | None = None) -> str:
-        """Press a key or combination ("Control+A", "Shift+Enter"), optionally on an element."""
+        """Press a key or a combination ("Control+A", "Shift+Enter"). With a
+        selector, presses on that element (first match); without, on the page.
+        Acts immediately — a shortcut or Enter can submit or delete — and
+        returns {key, selector}."""
         return json.dumps(session.press_key(key, selector), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(destructive=True))
     def fill_form(fields_json: str) -> str:
-        """Fill several fields in one call: a JSON list of {selector|intent, value, action?}."""
+        """Fill several fields in one call. fields_json is a JSON list of
+        {selector|intent, value, action?}; action is fill (default), select,
+        check or type. fill and select replace the value, type appends, check
+        ticks when value is true-like ("true", "1", "yes", "on" or omitted)
+        and clears otherwise. An intent is resolved by Jev against the page's
+        text, search, combobox, checkbox and radio inputs — or, when the page
+        has none of those, any interactive element. Returns {filled:[...]}; a
+        field with neither selector nor intent is an error."""
         try:
             fields = json.loads(fields_json)
         except json.JSONDecodeError as error:
@@ -1047,9 +1105,11 @@ def serve(
         return json.dumps(session.fill_form(fields), ensure_ascii=False)
 
     @mcp.tool(annotations=reads(open_world=False))
-    def network_detail(index: int | None = None, url_contains: str | None = None) -> str:
-        """Headers and body of one recorded request (newest match when filtering by URL)."""
-        return json.dumps(session.network_detail(index, url_contains), ensure_ascii=False)
+    def network_detail(id: int | None = None, url_contains: str | None = None) -> str:
+        """Headers and (text) body of one recorded request: pass the id from
+        network's output, or url_contains for the newest matching URL. Reads
+        jevnav's own network buffer; nothing is re-requested."""
+        return json.dumps(session.network_detail(id, url_contains), ensure_ascii=False)
 
     @mcp.tool(annotations=acts())
     def dialog_policy(action: str = "accept", match: str | None = None) -> str:
@@ -1150,7 +1210,16 @@ def serve(
 
     @mcp.tool(annotations=reads())
     def outline(selector: str = "body", limit: int = 200) -> str:
-        """Structural outline of a page or region: tags, headings, text, boxes."""
+        """Structural outline of a page or region: the shape an agent can act
+        on, without a screenshot. Returns {selector, count, elements}, one entry
+        per heading, landmark, section, form, label, control, link, image or
+        text block inside selector (default "body"), capped at limit (default
+        200) in document order; each entry carries tag, level (h1-h6), text,
+        ownText, leaf, name, id, classes and box [x, y, width, height]. A
+        selector that matches nothing falls back to the whole body (the result
+        still echoes the selector you asked for). Use it before editing a region
+        or diffing a mockup against the app — page_state is the clickable list,
+        styles the computed CSS, screenshot for humans. Reads only."""
         return json.dumps(session.outline(selector, limit), ensure_ascii=False)
 
     @mcp.tool(annotations=reads())
@@ -1221,6 +1290,17 @@ def _apply_field(page: Any, selector: str, action: str, value: Any) -> None:
     elif action == "select":
         locator.select_option(str(value))
     elif action == "check":
-        locator.check() if value in (True, "true", None) else locator.uncheck()
+        truthy = (
+            value is None
+            or value is True
+            or str(value).strip().lower()
+            in {
+                "true",
+                "1",
+                "yes",
+                "on",
+            }
+        )
+        locator.check() if truthy else locator.uncheck()
     else:
         raise ValueError(f"unknown fill_form action {action!r}")

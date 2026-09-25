@@ -1,5 +1,7 @@
 """The observability side: console, network, dialogs, read_js, tabs, scroll."""
 
+import json
+
 import pytest
 from helpers import FakeJev, fixture_url
 
@@ -59,7 +61,85 @@ def test_network_collects_requests(page, tmp_path):
     page.goto(fixture_url("loop-app.html"))
     requests = session.network(limit=20)["requests"]
     assert any("loop-app.html" in r["url"] for r in requests)
+    # The MCP layer json-dumps this: Playwright objects must not leak, and the
+    # id must be the one network_detail accepts.
+    json.dumps(requests)
+    entry = next(r for r in requests if "loop-app.html" in r["url"])
+    detail = session.network_detail(id=entry["id"])
+    assert detail["url"] == entry["url"]
     session.close()
+
+
+def fake_request(recorder, url: str, status: int | None) -> dict:
+    entry = {
+        "id": recorder._next_network_id(),
+        "method": "GET",
+        "url": url,
+        "status": status,
+        "resource": "document",
+        "request": None,
+        "response": None,
+    }
+    recorder.network.append(entry)
+    return entry
+
+
+def test_network_ids_survive_only_failed_filtering(page, tmp_path):
+    session = make_session(page, tmp_path)
+    recorder = session._recorder()
+    ok = fake_request(recorder, "https://example.test/ok", 200)
+    broken = fake_request(recorder, "https://example.test/broken", 500)
+    failed = session.network(limit=5, only_failed=True)["requests"]
+    assert [entry["id"] for entry in failed] == [broken["id"]]
+    detail = session.network_detail(id=broken["id"])
+    assert detail["url"] == "https://example.test/broken"
+    assert session.network_detail(id=ok["id"])["status"] == 200
+    session.close()
+
+
+def test_network_ids_stay_monotonic_when_the_ring_drops_old_entries(page, tmp_path):
+    session = make_session(page, tmp_path)
+    recorder = session._recorder()
+    first = fake_request(recorder, "https://example.test/first", 200)
+    for i in range(250):  # RING is 200: the first entry is long gone
+        fake_request(recorder, f"https://example.test/{i}", 200)
+    tail = session.network(limit=5)["requests"]
+    assert [entry["url"] for entry in tail] == [
+        f"https://example.test/{i}" for i in range(245, 250)
+    ]
+    assert all(entry["id"] > first["id"] for entry in tail)
+    with pytest.raises(RuntimeError, match="no recorded request with id"):
+        session.network_detail(id=first["id"])
+    session.close()
+
+
+def test_recorder_follows_the_active_tab(tmp_path):
+    """A tab switch must not keep reading the previous tab's buffers."""
+    session = Session(
+        start=None, trace=str(tmp_path / "s.trace.jsonl"), client=FakeJev({}).client()
+    )
+    try:
+        session.goto(fixture_url("loop-app.html"))
+        first = session._recorder()
+        first_ids = [entry["id"] for entry in first.network]
+        assert first_ids, "the first tab recorded its page load"
+        session.new_page()
+        second = session._recorder()
+        assert second is not first
+        assert session.network(limit=5)["requests"] == []  # fresh tab, fresh buffer
+        session.goto(fixture_url("loop-app.html"))
+        second_ids = [entry["id"] for entry in second.network]
+        assert second_ids, "the second tab recorded its own page load"
+        assert min(second_ids) > max(first_ids)  # ids keep counting across tabs
+        session.select_page(0)
+        assert session._recorder() is first  # reused, not re-attached
+        assert [entry["id"] for entry in first.network] == first_ids  # history intact
+        session.goto(fixture_url("loop-app.html"))
+        added = len(first.network) - len(first_ids)
+        # one entry per request: double listeners would record each request twice
+        assert added == len(second_ids)
+    finally:
+        session.close()
 
 
 def test_a_dialog_is_recorded_not_swallowed(page, tmp_path):
@@ -276,6 +356,14 @@ def test_fill_form_fills_several_fields_at_once(page, tmp_path):
     assert page.input_value("#b") == "second"
     assert page.is_checked("#c") is True
     assert page.input_value("#d") == "two"
+    # check accepts the true-like strings a model actually sends; anything else clears
+    page.set_content("<input id=x type=checkbox>")
+    for truthy in ("yes", "1", "on", True, None):
+        page.uncheck("#x")
+        session.fill_form([{"selector": "#x", "action": "check", "value": truthy}])
+        assert page.is_checked("#x") is True, truthy
+    session.fill_form([{"selector": "#x", "action": "check", "value": "off"}])
+    assert page.is_checked("#x") is False
     session.close()
 
 

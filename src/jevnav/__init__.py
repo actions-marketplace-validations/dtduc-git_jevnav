@@ -1,3 +1,3 @@
 """jevnav — browser decisions you can replay, test and audit."""
 
-__version__ = "0.1.14"
+__version__ = "0.1.15"

@@ -194,6 +194,28 @@ def test_every_tool_declares_mcp_annotations(fake_endpoint, tmp_path):
     assert found == ANNOTATIONS
 
 
+async def drive_network_by_id(fake_endpoint: str, trace: Path) -> tuple[dict, dict]:
+    from mcp import ClientSession, stdio_client
+
+    async with stdio_client(server_params(fake_endpoint, trace)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            await session.call_tool("goto", {"url": fixture_url("loop-app.html")})
+            net = json.loads((await session.call_tool("network", {"limit": 5})).content[0].text)
+            entry = next(r for r in net["requests"] if "loop-app.html" in r["url"])
+            raw = await session.call_tool("network_detail", {"id": entry["id"]})
+            detail = json.loads(raw.content[0].text)
+    return entry, detail
+
+
+def test_network_detail_by_id_over_mcp(fake_endpoint, tmp_path):
+    """The id network returns must resolve through a second MCP call."""
+    entry, detail = run_in_thread(
+        drive_network_by_id(fake_endpoint, tmp_path / "session.trace.jsonl")
+    )
+    assert detail["url"] == entry["url"]
+
+
 def test_mcp_server_lists_tools_and_drives_a_goal(fake_endpoint, tmp_path):
     trace = tmp_path / "session.trace.jsonl"
     outcomes = run_in_thread(

@@ -311,7 +311,7 @@ Tools:
 |---|---|
 | `console(limit, only_errors)` | recent console messages and page errors |
 | `network(limit, only_failed)` | recent requests, with statuses |
-| `network_detail(index, url_contains)` | one request's headers and body |
+| `network_detail(id, url_contains)` | one request's headers and body (id comes from `network`) |
 | `dialogs()` | alert/confirm/prompt, with the policy or rule that resolved them |
 | `dialog_policy(action, match)` | answer future dialogs: the default, or rules by message text |
 | `read_js(expression)` | evaluate JS in the page |
