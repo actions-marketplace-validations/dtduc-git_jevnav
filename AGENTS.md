@@ -58,9 +58,12 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
   `data-jevcid` once made a click land on a different element, silently).
 - Side tools (screenshot, upload, drag, resize, emulate, route, trace, perf, heap,
   lighthouse) are observation/acting conveniences for the caller. They must never
-  enter the decision path, the gate, or a replay, and they are not written to a
-  trace. Screenshots in particular stay out of the decision loop on purpose: a
-  pixel decision has no fingerprint and cannot be replayed.
+  enter the decision path or a replay. Since 0.2.0 every *acting* call is written
+  to the trace as a `kind: "action"` record (values masked; `replay` skips it —
+  SPEC § `action` record); observation tools are not traced. Only the `intent`
+  variants of `fill_form`/`upload_files` go through the gate, because there Jev
+  picks the element. Screenshots in particular stay out of the decision loop on
+  purpose: a pixel decision has no fingerprint and cannot be replayed.
 - Play mode (`play.py`) is measured against `--policy random` at the same rate,
   always. Never claim a game result without the control run beside it, and never
   tune the bundled game until the agent wins: the honest number here is the
@@ -69,6 +72,21 @@ uv run jevnav replay examples/local-demo/demo.trace.jsonl
   (`--user-data-dir`), attached Chrome (`--cdp`). Never close a browser you
   attached to, never open a profile Chrome has locked, and never let a profile
   path or cookie reach a trace (`tests/test_browser.py`).
+- Every command takes the same browser flags (`add_browser_flags` in `cli.py`,
+  `mcp` included): engine, profile, CDP, locale, timezone, user agent. A flag
+  that would change what runs but cannot apply is refused, not ignored: `--cdp`
+  with another engine, a profile, or context options stops the command at
+  startup (`cdp_conflict`; `browser.py` checks again for API callers), and the
+  CDP-only MCP tools refuse firefox/webkit. Chromium launch flags go to chromium
+  only — WebKit's Linux MiniBrowser exits on an option it does not know.
+- CDP emulation belongs to the session that set it: detaching the session resets
+  it. Throttling keeps one attached session per tab (`_throttle_session`); a
+  "set, then detach" CDP call is a silent no-op for anything stateful. A tab's
+  network override also beats the context's `set_offline`, so every offline
+  change is re-sent to the throttled tabs (`_sync_network_overrides`).
+- MCP tools raise through the `tool()` wrapper in `serve()`: SDK 2.x sends only
+  "Error executing tool X" for an ordinary exception, so errors are re-raised as
+  the SDK's `ToolError` to keep the reason visible to the agent.
 
 ## Diagrams
 

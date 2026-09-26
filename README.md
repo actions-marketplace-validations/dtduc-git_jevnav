@@ -212,7 +212,7 @@ No model call, no API key, ~30 seconds. Fails when a recorded target changed,
 became ambiguous, or a recorded `--success` selector is no longer visible.
 Inputs: `trace`, `report`, `execute`, `json`, `version` (default `latest` from
 PyPI, or `local` for a checkout). `@v0` floats; pin a release tag such as
-`@v0.2.1` for fully reproducible CI.
+`@v0.2.2` for fully reproducible CI.
 
 ## pytest
 
@@ -247,9 +247,12 @@ jevnav go --goal "..." --cdp http://127.0.0.1:9222              # attach to a ru
 ```
 
 Log in once with `--headed` and every later run reuses the profile; `--cdp`
-drives the Chrome you already have open and never closes it. Both work on `run`,
-`go`, `replay` and `mcp`; on the CLI commands `--browser` also selects firefox
-or webkit. Profile paths and cookies never reach a trace.
+drives the Chrome you already have open, keeps its own settings (so it refuses
+`--user-data-dir`, `--locale`, `--timezone` and `--user-agent`) and never
+closes it. Both work on `run`,
+`go`, `replay` and `mcp`, and so does `--browser` for firefox or webkit (plus
+`--locale`, `--timezone`, `--user-agent`). Profile paths and cookies never reach
+a trace.
 
 ## Evidence
 

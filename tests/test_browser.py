@@ -226,6 +226,7 @@ def test_cli_exposes_the_browser_flags(tmp_path):
     )
     assert mcp_args.user_data_dir == "/tmp/p"
     assert mcp_args.cdp == "http://127.0.0.1:9222"
+    assert parser.parse_args(["mcp", "--browser", "webkit"]).browser == "webkit"
 
 
 def test_a_trace_from_a_profile_run_leaks_nothing_about_the_profile(tmp_path):
@@ -285,5 +286,50 @@ def test_cdp_attach_is_chromium_only(tmp_path):
         with pytest.raises(ValueError, match="CDP attach only exists for chromium"):
             with browser_session(cdp="http://127.0.0.1:9222", engine="firefox"):
                 pass
+
+    in_thread(run)
+
+
+@pytest.mark.parametrize("engine", ["chromium", "firefox", "webkit"])
+def test_a_persistent_profile_applies_the_context_options(engine, tmp_path):
+    """--locale, --timezone and --user-agent used to be dropped when a profile was used."""
+    seen: dict[str, Any] = {}
+
+    def run() -> None:
+        with browser_session(
+            engine=engine,
+            user_data_dir=str(tmp_path / "profile"),
+            locale="vi-VN",
+            timezone="America/Sao_Paulo",
+            user_agent="jevnav-probe/1",
+        ) as page:
+            page.set_content("<p>x</p>")
+            seen["values"] = page.evaluate(
+                "[navigator.language, Intl.DateTimeFormat().resolvedOptions().timeZone,"
+                " navigator.userAgent]"
+            )
+
+    try:
+        in_thread(run)
+    except Exception as error:  # playwright raises when the browser is missing
+        if "Executable doesn't exist" in str(error) or "is not found" in str(error):
+            pytest.skip(f"{engine} is not installed (playwright install {engine})")
+        raise
+    assert seen["values"] == ["vi-VN", "America/Sao_Paulo", "jevnav-probe/1"]
+
+
+def test_cdp_attach_refuses_context_options():
+    """An attached Chrome keeps its own locale, timezone and user agent: say so, never ignore."""
+
+    def run() -> None:
+        for option in (
+            {"locale": "vi-VN"},
+            {"timezone": "UTC"},
+            {"user_agent": "x"},
+            {"user_data_dir": "/tmp/jevnav-profile"},
+        ):
+            with pytest.raises(ValueError, match="--cdp"):
+                with browser_session(cdp="http://127.0.0.1:9222", **option):
+                    pass
 
     in_thread(run)

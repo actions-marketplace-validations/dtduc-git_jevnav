@@ -16,8 +16,11 @@ every session is auditable without configuring anything.
 
 `--start <url>` exists only as a convenience for a project-scoped config that
 always begins on one page; put it in that project's config, not in your global
-one. Same for the per-install choices: `--user-data-dir` (log in to
-any number of sites once, in one profile) and `--cdp`.
+one. Same for the per-install choices: `--browser` (chromium, firefox or
+webkit), `--user-data-dir` (log in to any number of sites once, in one profile),
+`--cdp`, `--locale`, `--timezone`, `--user-agent`. The CDP-based tools
+(`perf_metrics`, `heap_snapshot`, CPU/network throttling in `emulate`) need
+chromium and say so on firefox/webkit.
 
 Tools:
 
@@ -40,7 +43,7 @@ change state, and every call lands in the session trace:
 | `upload_files(paths, selector, intent)` | set files, on a selector or an input Jev picks (paths must be inside `--file-root`) |
 | `drag(source_selector, target_selector)` | drag one element onto another |
 | `resize(width, height)` | change the viewport |
-| `emulate(color_scheme, media, geolocation, offline, …)` | emulate media, location and connectivity |
+| `emulate(color_scheme, media, geolocation, offline, cpu_throttle, network_conditions, …)` | emulate media, location, connectivity and a slow device (throttling: chromium) |
 | `press_key(key, selector)` | a key or combination ("Control+A"), optionally on an element |
 | `fill_form(fields_json)` | fill several fields in one call: {selector\|intent, value, action} — an `intent` resolves through the gate |
 | `read_js(expression)` | evaluate JS in the page — arbitrary JavaScript, `--no-eval` disables it |
@@ -117,7 +120,7 @@ dialog with the rule that fired, so the run stays auditable.
 | risky actions | whatever the test says | whatever the LLM says | **never executed by `browse`/`goal`** until a human says so (risky patterns cover nine languages); direct primitives run immediately and are annotated |
 | regression evidence | trace viewer, re-run the test | none | **decision trace + offline replay that exits 1** |
 | outcome assertion | `expect(...)` | none | `--success` selector, verified or reported unverified |
-| engines | chromium, firefox, webkit | chromium | chromium, firefox, webkit (CLI `--browser`; the MCP server drives chromium) |
+| engines | chromium, firefox, webkit | chromium | chromium, firefox, webkit (`--browser`) |
 | CPU throttling / Slow-3G | ✅ | ✅ | ✅ (chromium, CDP) |
 | request headers/body | ✅ | ✅ | ✅ `network_detail` |
 | multi-field form fill | ✅ | ✅ `fill_form` | ✅ `fill_form` (selector or intent) |

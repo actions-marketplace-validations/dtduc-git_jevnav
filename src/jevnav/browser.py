@@ -2,8 +2,9 @@
 
 Three modes, one shape (a `page`):
 
-- default          a fresh headless Chromium, no cookies, nothing kept
-- `--user-data-dir` a persistent Chromium profile — log in once, stay logged in
+- default          a fresh headless browser (Chromium unless `--browser` says
+                    firefox or webkit), no cookies, nothing kept
+- `--user-data-dir` a persistent profile — log in once, stay logged in
 - `--cdp URL`       attach to a Chrome you already have open (your session,
                     your extensions) over the DevTools protocol
 
@@ -277,6 +278,14 @@ def browser_and_recorder(
         raise ValueError(
             "CDP attach only exists for chromium; drop --cdp or use --browser chromium"
         )
+    if cdp and user_data_dir:
+        raise ValueError("--user-data-dir and --cdp are two different browsers; use one")
+    if cdp and (locale or timezone or user_agent):
+        # the attached Chrome keeps its own settings; ignoring the flags would lie
+        raise ValueError(
+            "--locale/--timezone/--user-agent cannot change a browser attached with --cdp; "
+            "set them in that Chrome, or drop --cdp"
+        )
     viewport = viewport or DEFAULT_VIEWPORT
     context_options = {"viewport": viewport}
     if locale:
@@ -305,8 +314,12 @@ def browser_and_recorder(
             context = browser_type.launch_persistent_context(
                 user_data_dir,
                 headless=not headed,
-                viewport=viewport,
-                args=["--no-first-run", "--no-default-browser-check"],
+                # Chromium's flags only: WebKit's Linux MiniBrowser exits on an
+                # option it does not know
+                args=["--no-first-run", "--no-default-browser-check"]
+                if engine == "chromium"
+                else [],
+                **context_options,  # viewport, and locale/timezone/user agent when set
             )
             page = context.pages[0] if context.pages else context.new_page()
             try:
