@@ -235,6 +235,78 @@ def test_mcp_traces_by_default_and_can_opt_out(monkeypatch, tmp_path):
     assert captured["start"] == "https://x.test"
 
 
+def test_mcp_takes_the_shared_browser_flags(monkeypatch):
+    """`jevnav mcp` drives the same engines and context options as the other commands."""
+    import inspect
+
+    from jevnav import cli as cli_module
+    from jevnav import mcp as mcp_module
+
+    real_serve = mcp_module.serve
+    captured = {}
+
+    def fake_serve(**kwargs):
+        captured.clear()
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(mcp_module, "serve", fake_serve)
+    monkeypatch.setattr(cli_module, "_client", lambda: FakeJev({}).client())
+    assert cli_module.main(["mcp"]) == 0
+    assert captured["engine"] == "chromium"
+    argv = [
+        "mcp",
+        "--browser",
+        "firefox",
+        "--locale",
+        "vi-VN",
+        "--timezone",
+        "Asia/Ho_Chi_Minh",
+        "--user-agent",
+        "probe/1",
+        "--dialog-policy",
+        "accept",
+        "--max-candidates",
+        "40",
+    ]
+    assert cli_module.main(argv) == 0
+    assert captured["engine"] == "firefox"
+    assert captured["locale"] == "vi-VN"
+    assert captured["timezone"] == "Asia/Ho_Chi_Minh"
+    assert captured["user_agent"] == "probe/1"
+    assert captured["dialog_policy"] == "accept"
+    assert captured["max_candidates"] == 40
+    # the fake above would hide a keyword the real server does not take
+    inspect.signature(real_serve).bind(**captured)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--browser", "firefox"],
+        ["--user-data-dir", "/tmp/profile"],
+        ["--locale", "vi-VN"],
+        ["--timezone", "UTC"],
+        ["--user-agent", "probe/1"],
+    ],
+)
+@pytest.mark.parametrize("command", [["replay", "t.jsonl"], ["mcp"]])
+def test_cdp_conflicts_are_refused_before_anything_runs(command, extra, monkeypatch, capsys):
+    """--cdp attaches to a running Chrome: flags it cannot honour stop the command
+    at startup (exit 2), instead of being ignored or failing on the first call."""
+    from jevnav import cli as cli_module
+    from jevnav import mcp as mcp_module
+
+    def must_not_run(**kwargs):
+        raise AssertionError("serve() ran despite a --cdp conflict")
+
+    monkeypatch.setattr(mcp_module, "serve", must_not_run)
+    with pytest.raises(SystemExit) as stopped:
+        cli_module.main([*command, "--cdp", "http://127.0.0.1:9222", *extra])
+    assert stopped.value.code == 2
+    assert "--cdp" in capsys.readouterr().err
+
+
 def test_session_options_bind_to_the_real_session(tmp_path):
     """The CLI tests patch _session, so nothing else checks this wiring."""
     import inspect

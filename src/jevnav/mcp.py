@@ -16,6 +16,7 @@ import functools
 import inspect
 import itertools
 import json
+import logging
 import queue
 import threading
 import time
@@ -178,6 +179,14 @@ class BrowserThread:
         self._thread.join(timeout=10)
 
 
+def _tab_at(pages: list[Any], index: int) -> Any:
+    """The tab at `index` (the order tabs() reports), or a ValueError naming what is open."""
+    try:
+        return pages[index]
+    except IndexError:
+        raise ValueError(f"no tab at index {index} ({len(pages)} open)") from None
+
+
 def archive_existing_trace(trace: str | Path) -> Path | None:
     """Move a previous session's trace aside so evidence is never overwritten.
 
@@ -258,6 +267,9 @@ class Session:
             )
         self.steps: list[dict[str, Any]] = []
         self.actions: list[dict[str, Any]] = []
+        self._cdp_sessions: dict[Any, Any] = {}  # per tab, for throttling (see emulate)
+        self._network_override: dict[Any, dict[str, int]] = {}  # per throttled tab
+        self._offline = False  # the context's offline switch, as emulate last set it
         if start:
             self.on_page(lambda page: page.goto(start, wait_until="domcontentloaded"))
 
@@ -306,6 +318,15 @@ class Session:
         """Computed styles for up to `limit` matches — the facts behind a visual difference."""
         return self.on_page(lambda page: page_module.styles(page, selector, props, limit))
 
+    def _require_chromium(self, tool: str) -> None:
+        """CDP-only tools fail up front, before anything is applied, on firefox/webkit."""
+        engine = self._browser_kwargs["engine"]
+        if engine != "chromium":
+            raise RuntimeError(
+                f"{tool} goes through CDP, which only chromium has; this server drives "
+                f"{engine} (restart it with --browser chromium)"
+            )
+
     def read_js(self, expression: str) -> Any:
         """Evaluate JS in the page and return it (recorded as an action, masked)."""
         if not self.allow_eval:
@@ -347,18 +368,22 @@ class Session:
 
         return self.on_page(describe)
 
-    def select_page(self, index: int) -> dict[str, Any]:
+    def _own_browser(self) -> BrowserThread:
+        """jevnav's own browser, launched here if this is the session's first call."""
+        if self.browser is None and self.page is None:
+            self.on_page(lambda page: None)
         if self.browser is None:
             raise RuntimeError("tabs need jevnav's own browser (not an injected page)")
-        self.browser.switch_page(lambda page: page.context.pages[index])
+        return self.browser
+
+    def select_page(self, index: int) -> dict[str, Any]:
+        self._own_browser().switch_page(lambda page: _tab_at(page.context.pages, index))
         return self.tabs()
 
     def new_page(self, url: str | None = None) -> dict[str, Any]:
         if url:
             url = self._check_url(url, scheme="new_page")
-        if self.browser is None:
-            raise RuntimeError("tabs need jevnav's own browser (not an injected page)")
-        self.browser.switch_page(
+        self._own_browser().switch_page(
             lambda page: (
                 (page.context.new_page().goto(url, wait_until="domcontentloaded") and None)
                 or page.context.pages[-1]
@@ -369,16 +394,19 @@ class Session:
         return self.tabs()
 
     def close_page(self, index: int) -> dict[str, Any]:
-        if self.browser is None:
-            raise RuntimeError("tabs need jevnav's own browser (not an injected page)")
+        browser = self._own_browser()
 
         def chooser(page: Any) -> Any:
-            target = page.context.pages[index]
             pages = page.context.pages
+            target = _tab_at(pages, index)
+            remaining = [tab for tab in pages if tab is not target]
+            if not remaining:
+                raise ValueError("cannot close the only tab; open another with new_page first")
             target.close()
-            return page if page in pages and not page.is_closed() else pages[-1]
+            # closing the current tab moves to the last remaining one, never to itself
+            return page if page is not target else remaining[-1]
 
-        self.browser.switch_page(chooser)
+        browser.switch_page(chooser)
         return self.tabs()
 
     # ---- acting primitives the agent may need beyond click/fill -------------
@@ -681,7 +709,38 @@ class Session:
         "Fast 3G": {"latency_ms": 150, "download_kbps": 1600, "upload_kbps": 750},
         "Slow 4G": {"latency_ms": 80, "download_kbps": 4000, "upload_kbps": 3000},
         "Fast 4G": {"latency_ms": 20, "download_kbps": 16000, "upload_kbps": 9000},
+        "No throttling": {"latency_ms": 0, "download_kbps": -1, "upload_kbps": -1},
     }
+
+    def _throttle_session(self, page: Any) -> Any:
+        """One CDP session per tab, kept attached: detaching it resets the rates."""
+        for closed in [known for known in self._cdp_sessions if known.is_closed()]:
+            del self._cdp_sessions[closed]
+        cdp = self._cdp_sessions.get(page)
+        if cdp is None:
+            cdp = self._cdp_sessions[page] = page.context.new_cdp_session(page)
+        return cdp
+
+    def _sync_network_overrides(self) -> None:
+        """Resend each throttled tab's network override with the current offline switch.
+
+        A throttled tab keeps its own CDP override, and that override wins over
+        the context's set_offline: without this, offline=True left a Slow 3G tab
+        online, and offline=False left an offline one offline (measured).
+        """
+        for closed in [tab for tab in self._network_override if tab.is_closed()]:
+            del self._network_override[closed]
+        from playwright.sync_api import Error as PlaywrightError
+
+        for tab, conditions in list(self._network_override.items()):
+            try:
+                self._throttle_session(tab).send(
+                    "Network.emulateNetworkConditions", {"offline": self._offline, **conditions}
+                )
+            except PlaywrightError:
+                # the tab closed between the check and the send: forget it
+                self._network_override.pop(tab, None)
+                self._cdp_sessions.pop(tab, None)
 
     def emulate(
         self,
@@ -701,19 +760,27 @@ class Session:
         """Emulate media, geolocation, CPU throttling and network conditions.
 
         CPU and network throttling go through CDP, so they are chromium-only.
-        ``network_conditions`` accepts a preset name or explicit kbps/latency.
+        ``network_conditions`` takes a preset name; explicit latency/kbps values
+        refine it or stand alone. A network call replaces the tab's whole network
+        profile: unset latency is 0 and unset throughput is unthrottled.
         """
         applied: dict[str, Any] = {}
         preset = self.NETWORK_PRESETS.get(network_conditions) if network_conditions else None
-        if network_conditions and preset is None and latency_ms is None:
+        explicit = any(value is not None for value in (latency_ms, download_kbps, upload_kbps))
+        if network_conditions and preset is None:
             raise ValueError(
                 f"unknown network preset {network_conditions!r} (expected one of "
-                f"{sorted(self.NETWORK_PRESETS)} or explicit latency/download_kbps)"
+                f"{sorted(self.NETWORK_PRESETS)}; for custom values leave network_conditions "
+                "out and pass latency_ms/download_kbps/upload_kbps)"
             )
+        network = preset is not None or explicit
         profile = preset or {}
-        latency = latency_ms if latency_ms is not None else profile.get("latency_ms")
-        down = download_kbps if download_kbps is not None else profile.get("download_kbps")
-        up = upload_kbps if upload_kbps is not None else profile.get("upload_kbps")
+        # anything not given is not throttled: latency 0, throughput -1 (CDP's "off")
+        latency = latency_ms if latency_ms is not None else profile.get("latency_ms", 0)
+        down = download_kbps if download_kbps is not None else profile.get("download_kbps", -1)
+        up = upload_kbps if upload_kbps is not None else profile.get("upload_kbps", down)
+        if cpu_throttle is not None or network:
+            self._require_chromium("CPU/network throttling")
 
         def run(page: Any) -> None:
             if color_scheme or reduced_motion or forced_colors or media:
@@ -740,29 +807,29 @@ class Session:
                 applied["geolocation"] = geolocation
             if offline is not None:
                 page.context.set_offline(offline)
+                self._offline = offline
                 applied["offline"] = offline
-            if cpu_throttle is not None or down is not None:
-                cdp = page.context.new_cdp_session(page)
-                if cpu_throttle is not None:
-                    cdp.send("Emulation.setCPUThrottlingRate", {"rate": cpu_throttle})
-                    applied["cpu_throttle"] = cpu_throttle
-                if down is not None:
-                    cdp.send(
-                        "Network.emulateNetworkConditions",
-                        {
-                            "offline": bool(offline),
-                            "latency": latency or 0,
-                            "downloadThroughput": int(down * 1024 / 8),
-                            "uploadThroughput": int((up or down) * 1024 / 8),
-                        },
-                    )
-                    applied["network"] = {
-                        "latency_ms": latency or 0,
-                        "download_kbps": down,
-                        "upload_kbps": up or down,
-                        "preset": network_conditions,
-                    }
-                cdp.detach()
+            if cpu_throttle is not None:
+                # kept attached on purpose: Chrome drops a session's emulation
+                # when it detaches, which once made this a silent no-op
+                self._throttle_session(page).send(
+                    "Emulation.setCPUThrottlingRate", {"rate": cpu_throttle}
+                )
+                applied["cpu_throttle"] = cpu_throttle
+            if network:
+                self._network_override[page] = {
+                    "latency": latency,
+                    "downloadThroughput": -1 if down < 0 else int(down * 1024 / 8),
+                    "uploadThroughput": -1 if up < 0 else int(up * 1024 / 8),
+                }
+                applied["network"] = {
+                    "latency_ms": latency,
+                    "download_kbps": down,
+                    "upload_kbps": up,
+                    "preset": network_conditions if preset is not None else None,
+                }
+            if network or offline is not None:
+                self._sync_network_overrides()
 
         self.on_page(run)
         for key, value in {
@@ -822,6 +889,7 @@ class Session:
     # ---- profiling: chromium-only, and never part of a decision ------------
     def perf_metrics(self) -> dict[str, Any]:
         """Chromium performance counters (CDP Performance.getMetrics) for the page."""
+        self._require_chromium("perf_metrics")
 
         def collect(page: Any) -> dict[str, float]:
             cdp = page.context.new_cdp_session(page)
@@ -850,6 +918,7 @@ class Session:
 
     def heap_snapshot(self, path: str | None = None) -> dict[str, Any]:
         """Write a Chromium heap snapshot (open it in Chrome DevTools > Memory)."""
+        self._require_chromium("heap_snapshot")
         target = self._check_writable_path(path or f"jevnav-heap-{int(time.time())}.heapsnapshot")
         target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1165,6 +1234,15 @@ def server_class() -> Any:
         return FastMCP
 
 
+def tool_error_class() -> Any:
+    """The SDK's ToolError, the one exception whose text reaches the client."""
+    try:
+        from mcp.server.mcpserver.exceptions import ToolError
+    except ImportError:
+        from mcp.server.fastmcp.exceptions import ToolError
+    return ToolError
+
+
 def serve(
     *,
     start: str | None = None,
@@ -1209,6 +1287,41 @@ def serve(
         allow_file_urls=allow_file_urls,
     )
     mcp = server_class()("jevnav")
+    tool_error = tool_error_class()
+    from playwright.sync_api import Error as PlaywrightError
+
+    # refusals and browser failures an agent causes routinely; anything else is a
+    # bug and keeps its traceback in the server log
+    routine_errors = (ValueError, RuntimeError, OSError, PlaywrightError)
+
+    def tool(**options: Any):
+        """Register a tool whose failures tell the client why.
+
+        MCP SDK 2.x keeps an ordinary exception's text on the server and sends
+        only "Error executing tool X"; the reason (a path outside --file-root,
+        --no-eval, a CDP-only tool on firefox) is what the agent needs to recover.
+        """
+        register = mcp.tool(**options)
+
+        def decorate(function):
+            @functools.wraps(function)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return function(*args, **kwargs)
+                except tool_error:
+                    raise
+                except Exception as error:
+                    if not isinstance(error, routine_errors):
+                        # not one of jevnav's refusals: keep the stack in the server
+                        # log (stderr), the client only gets the reason
+                        logging.getLogger("jevnav.mcp").exception(
+                            "tool %s failed", function.__name__
+                        )
+                    raise tool_error(f"{type(error).__name__}: {error}") from error
+
+            return register(wrapper)
+
+        return decorate
 
     from mcp.types import ToolAnnotations
 
@@ -1265,7 +1378,7 @@ def serve(
 
         return wrap
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     def browse(
         intent: str,
         action: str = "click",
@@ -1282,7 +1395,7 @@ def serve(
         """
         return json.dumps(session.browse(intent, action, value, min_confidence), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(idempotent=True))
+    @tool(annotations=acts(idempotent=True))
     @traced("goto")
     def goto(url: str) -> str:
         """Open a URL in the current tab, replacing its content, and wait until
@@ -1291,7 +1404,7 @@ def serve(
         list."""
         return json.dumps(session.goto(url), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     def goal(
         goal: str, context_json: str = "{}", max_steps: int = 8, success: str | None = None
     ) -> str:
@@ -1310,13 +1423,13 @@ def serve(
             return json.dumps({"status": "error", "error": f"context_json is not JSON: {error}"})
         return json.dumps(session.goal(goal, context, max_steps, success), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads())
+    @tool(annotations=reads())
     def page_state() -> str:
         """Current URL, title and the interactive elements jevnav can see. The
         elements it can act on carry a jevnav data-jevcid stamp."""
         return json.dumps(session.page_state(), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads(open_world=False))
+    @tool(annotations=reads(open_world=False))
     def console(limit: int = 20, only_errors: bool = False) -> str:
         """Recent console messages and page errors, newest last (observation
         only; not part of a trace). Returns {messages:[{type, text}]}, where
@@ -1325,7 +1438,7 @@ def serve(
         after an action to see what the page complained about."""
         return json.dumps(session.console(limit, only_errors), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads(open_world=False))
+    @tool(annotations=reads(open_world=False))
     def network(limit: int = 20, only_failed: bool = False) -> str:
         """Recent network requests, newest last; only_failed keeps 4xx/5xx and
         transport errors. Each entry carries method, url, status, resource,
@@ -1333,7 +1446,7 @@ def serve(
         for headers and body."""
         return json.dumps(session.network(limit, only_failed), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("screenshot")
     def screenshot(
         path: str | None = None, full_page: bool = False, selector: str | None = None
@@ -1343,7 +1456,7 @@ def serve(
             session.screenshot(path, full_page=full_page, selector=selector), ensure_ascii=False
         )
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("upload_files")
     def upload_files(
         paths: list[str], selector: str | None = None, intent: str | None = None
@@ -1360,7 +1473,7 @@ def serve(
             session.upload_files(paths, selector=selector, intent=intent), ensure_ascii=False
         )
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("drag")
     def drag(source_selector: str, target_selector: str) -> str:
         """Drag the element at source_selector onto target_selector. The drag
@@ -1371,7 +1484,7 @@ def serve(
             ensure_ascii=False,
         )
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("press_key")
     def press_key(key: str, selector: str | None = None) -> str:
         """Press a key or a combination ("Control+A", "Shift+Enter"). With a
@@ -1380,7 +1493,7 @@ def serve(
         returns {key, selector}."""
         return json.dumps(session.press_key(key, selector), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("fill_form")
     def fill_form(fields_json: str) -> str:
         """Fill several fields in one call. fields_json is a JSON list of
@@ -1397,14 +1510,14 @@ def serve(
             return json.dumps({"error": f"fields_json is not JSON: {error}"})
         return json.dumps(session.fill_form(fields), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads(open_world=False))
+    @tool(annotations=reads(open_world=False))
     def network_detail(id: int | None = None, url_contains: str | None = None) -> str:
         """Headers and (text) body of one recorded request: pass the id from
         network's output, or url_contains for the newest matching URL. Reads
         jevnav's own network buffer; nothing is re-requested."""
         return json.dumps(session.network_detail(id, url_contains), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("dialog_policy")
     def dialog_policy(action: str = "accept", match: str | None = None) -> str:
         """Answer dialogs from now on. match=None sets the session default;
@@ -1413,14 +1526,14 @@ def serve(
         only; dialogs already seen stay recorded."""
         return json.dumps(session.dialog_policy(action, match), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(idempotent=True))
+    @tool(annotations=acts(idempotent=True))
     @traced("resize")
     def resize(width: int, height: int) -> str:
         """Resize the browser viewport to width x height. The size persists for
         the session and can change what the page renders (responsive layout)."""
         return json.dumps(session.resize(width, height), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(idempotent=True))
+    @tool(annotations=acts(idempotent=True))
     @traced("emulate")
     def emulate(
         color_scheme: str | None = None,
@@ -1429,14 +1542,28 @@ def serve(
         media: str | None = None,
         geolocation: str | None = None,
         offline: bool | None = None,
+        cpu_throttle: float | None = None,
+        network_conditions: str | None = None,
+        latency_ms: int | None = None,
+        download_kbps: int | None = None,
+        upload_kbps: int | None = None,
     ) -> str:
-        """Emulate media, geolocation ("lat,lon") and connectivity. Media
-        overrides (color scheme, reduced motion, forced colors) apply to the
-        current tab; geolocation and offline apply to the whole browser context,
-        so later tabs and loads keep them. Fields you omit are left unchanged.
-        The position persists context-wide, but only an http(s) origin that
-        called emulate can read it (that origin gets the geolocation
-        permission); call emulate again after navigating elsewhere."""
+        """Emulate media, geolocation ("lat,lon"), connectivity and a slow
+        device. Media overrides (color scheme, reduced motion, forced colors)
+        apply to the current tab; geolocation and offline apply to the whole
+        browser context, so later tabs and loads keep them. Fields you omit are
+        left unchanged. The position persists context-wide, but only an http(s)
+        origin that called emulate can read it (that origin gets the geolocation
+        permission); call emulate again after navigating elsewhere.
+        cpu_throttle slows the current tab's CPU by that factor (4 = four times
+        slower; 1 restores full speed). network_conditions throttles the
+        current tab's network with a preset ("Slow 3G", "Fast 3G", "Slow 4G",
+        "Fast 4G", or "No throttling" to switch it off) or with explicit
+        latency_ms/download_kbps/upload_kbps. A network call replaces the tab's
+        whole network profile (unset latency is 0, unset throughput is
+        unthrottled) rather than editing it. Throttling lasts until changed and
+        needs a chromium server (it goes through CDP); on firefox/webkit it is
+        refused before anything else is applied."""
         return json.dumps(
             session.emulate(
                 color_scheme=color_scheme,
@@ -1445,11 +1572,16 @@ def serve(
                 media=media,
                 geolocation=geolocation,
                 offline=offline,
+                cpu_throttle=cpu_throttle,
+                network_conditions=network_conditions,
+                latency_ms=latency_ms,
+                download_kbps=download_kbps,
+                upload_kbps=upload_kbps,
             ),
             ensure_ascii=False,
         )
 
-    @mcp.tool(annotations=acts())
+    @tool(annotations=acts())
     @traced("route")
     def route(
         pattern: str,
@@ -1468,13 +1600,13 @@ def serve(
             ensure_ascii=False,
         )
 
-    @mcp.tool(annotations=acts(idempotent=True))
+    @tool(annotations=acts(idempotent=True))
     @traced("unroute")
     def unroute(pattern: str | None = None) -> str:
         """Remove one route stub, or all of them."""
         return json.dumps(session.unroute(pattern), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads())
+    @tool(annotations=reads())
     def perf_metrics() -> str:
         """Chromium performance counters for the current page, read over CDP:
         DOM nodes, JS heap size, layout and task durations. Cheap telemetry
@@ -1482,7 +1614,7 @@ def serve(
         chrome-devtools. Reads the page, changes nothing, chromium only."""
         return json.dumps(session.perf_metrics(), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("heap_snapshot")
     def heap_snapshot(path: str | None = None) -> str:
         """Write a Chromium heap snapshot of the current page to a file (default:
@@ -1495,7 +1627,7 @@ def serve(
         on the page, and it is chromium-only."""
         return json.dumps(session.heap_snapshot(path), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(idempotent=True))
+    @tool(annotations=acts(idempotent=True))
     @traced("lighthouse")
     def lighthouse(
         url: str | None = None, categories: str = "performance,accessibility,best-practices,seo"
@@ -1505,13 +1637,13 @@ def serve(
         first use), takes tens of seconds, and does not change the page."""
         return json.dumps(session.lighthouse(url, categories=categories), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @tool(annotations=acts())
     @traced("trace_start")
     def trace_start(screenshots: bool = True) -> str:
         """Start a Playwright trace (open it later with `npx playwright show-trace`)."""
         return json.dumps(session.trace_start(screenshots), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("trace_stop")
     def trace_stop(path: str | None = None) -> str:
         """Stop the Playwright trace started by trace_start and write the zip to
@@ -1524,12 +1656,12 @@ def serve(
         overwrites that zip. Chromium, Firefox and WebKit all support it."""
         return json.dumps(session.trace_stop(path), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads(open_world=False))
+    @tool(annotations=reads(open_world=False))
     def dialogs() -> str:
         """Every alert/confirm/prompt seen, with the policy that resolved it."""
         return json.dumps(session.dialogs(), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads())
+    @tool(annotations=reads())
     def outline(selector: str = "body", limit: int = 200) -> str:
         """Structural outline of a page or region: the shape an agent can act
         on, without a screenshot. Returns {selector, count, elements}, one entry
@@ -1543,12 +1675,12 @@ def serve(
         styles the computed CSS, screenshot for humans. Reads only."""
         return json.dumps(session.outline(selector, limit), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads())
+    @tool(annotations=reads())
     def styles(selector: str, props: list[str] | None = None, limit: int = 10) -> str:
         """Computed styles for the elements matching a selector (the facts behind a visual diff)."""
         return json.dumps(session.styles(selector, props, limit), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("read_js")
     def read_js(expression: str) -> str:
         """Evaluate a JS expression in the page and return its value. This is
@@ -1557,7 +1689,7 @@ def serve(
         --no-eval)."""
         return json.dumps({"value": session.read_js(expression)}, ensure_ascii=False, default=str)
 
-    @mcp.tool(annotations=reads())
+    @tool(annotations=reads())
     def wait_for(
         text: str | None = None, selector: str | None = None, timeout_ms: int = 15000
     ) -> str:
@@ -1565,37 +1697,39 @@ def serve(
         page_state (element stamps included)."""
         return json.dumps(session.wait_for(text, selector, timeout_ms), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @tool(annotations=acts())
     @traced("scroll")
     def scroll(direction: str = "down", amount: int = 800) -> str:
         """Scroll the page down or up by pixels of document height."""
         return json.dumps(session.scroll(direction, amount), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads())
+    @tool(annotations=reads())
     def tabs() -> str:
         """List the open pages and which one jevnav is driving."""
         return json.dumps(session.tabs(), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts())
+    @tool(annotations=acts())
     @traced("new_page")
     def new_page(url: str | None = None) -> str:
         """Open a new tab (optionally at a URL) and drive it from now on."""
         return json.dumps(session.new_page(url), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(idempotent=True))
+    @tool(annotations=acts(idempotent=True))
     @traced("select_page")
     def select_page(index: int) -> str:
         """Drive the tab at this index (see tabs). The switch is immediate; the
         tab keeps its state, and an out-of-range index is an error."""
         return json.dumps(session.select_page(index), ensure_ascii=False)
 
-    @mcp.tool(annotations=acts(destructive=True))
+    @tool(annotations=acts(destructive=True))
     @traced("close_page")
     def close_page(index: int) -> str:
-        """Close the tab at this index and keep driving a remaining one."""
+        """Close the tab at this index (see tabs). If it was the tab being driven,
+        jevnav drives the last remaining one; closing the only tab, or an
+        out-of-range index, is an error. Returns the tabs that remain."""
         return json.dumps(session.close_page(index), ensure_ascii=False)
 
-    @mcp.tool(annotations=reads(open_world=False))
+    @tool(annotations=reads(open_world=False))
     def summary() -> str:
         """This session so far: steps, auto/review/blocked counts, cost, latency."""
         return json.dumps(session.summary(), ensure_ascii=False)

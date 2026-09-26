@@ -69,7 +69,7 @@ def add_browser_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--headed", action="store_true", help="show the browser")
     parser.add_argument(
         "--user-data-dir",
-        help="persistent Chromium profile: log in once (headful), stay logged in",
+        help="persistent browser profile: log in once (headful), stay logged in",
     )
     parser.add_argument(
         "--cdp",
@@ -342,13 +342,11 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         trace=args.trace,
         gates=args.gates,
         model=args.model,
-        headed=args.headed,
-        user_data_dir=args.user_data_dir,
-        cdp=args.cdp,
         allow_eval=not args.no_eval,
         max_candidates=args.max_candidates,
         file_root=args.file_root,
         allow_file_urls=args.allow_file_urls,
+        **session_options(args),
     )
 
 
@@ -502,12 +500,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp.add_argument("--no-trace", action="store_true", help="do not write a trace at all")
     mcp.add_argument(
-        "--max-candidates",
-        type=int,
-        default=None,
-        help="how many elements the model may choose from (default 120, hard cap 254)",
-    )
-    mcp.add_argument(
         "--no-eval",
         action="store_true",
         help="refuse read_js: closes the JavaScript read channel",
@@ -525,17 +517,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp.add_argument("--gates", help="gates.yaml")
     mcp.add_argument("--model", default="jev-latest")
-    mcp.add_argument("--headed", action="store_true")
-    mcp.add_argument("--user-data-dir", help="persistent Chromium profile to reuse")
-    mcp.add_argument(
-        "--cdp", help="attach to a running Chrome over CDP, e.g. http://127.0.0.1:9222"
-    )
+    add_browser_flags(mcp)  # same engines and context options as every other command
     mcp.set_defaults(func=cmd_mcp)
     return parser
 
 
+def cdp_conflict(args: argparse.Namespace) -> str | None:
+    """Why the browser flags cannot go together, or None.
+
+    --cdp attaches to a Chrome that is already running: another engine, a
+    profile or context options cannot apply to it, and ignoring them would lie.
+    """
+    if not getattr(args, "cdp", None):
+        return None
+    if args.browser != "chromium":
+        return "--cdp attaches to a running Chrome: it only works with --browser chromium"
+    ignored = [
+        flag
+        for flag, value in (
+            ("--user-data-dir", args.user_data_dir),
+            ("--locale", args.locale),
+            ("--timezone", args.timezone),
+            ("--user-agent", args.user_agent),
+        )
+        if value
+    ]
+    if ignored:
+        return (
+            f"{', '.join(ignored)} cannot change a browser attached with --cdp; "
+            "set it in that Chrome, or drop --cdp"
+        )
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    conflict = cdp_conflict(args)
+    if conflict:
+        parser.error(conflict)  # exits 2 (EXIT_USAGE) before anything starts
     if args.command in {"run", "go"} and not _api_key():
         print(
             "TYPESAFE_API_KEY is not set (and ~/.config/typesafe/apikey.txt is missing)",

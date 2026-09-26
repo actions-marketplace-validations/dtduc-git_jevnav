@@ -86,7 +86,7 @@ def run_in_thread(coroutine) -> Any:
     return box["value"]
 
 
-def server_params(fake_endpoint: str, trace: Path):
+def server_params(fake_endpoint: str, trace: Path, extra: tuple[str, ...] = ()):
     from mcp import StdioServerParameters
 
     env = {
@@ -96,7 +96,7 @@ def server_params(fake_endpoint: str, trace: Path):
     }
     return StdioServerParameters(
         command=sys.executable,
-        args=["-m", "jevnav", "mcp", "--trace", str(trace), "--allow-file-urls"],
+        args=["-m", "jevnav", "mcp", "--trace", str(trace), "--allow-file-urls", *extra],
         env=env,
         cwd=str(REPO),
     )
@@ -112,10 +112,15 @@ async def list_tool_annotations(fake_endpoint: str, trace: Path) -> dict[str, An
     return {tool.name: tool.annotations for tool in tools}
 
 
-async def drive(fake_endpoint: str, trace: Path, calls: list[tuple[str, dict]]) -> list[str]:
+async def drive(
+    fake_endpoint: str,
+    trace: Path,
+    calls: list[tuple[str, dict]],
+    extra: tuple[str, ...] = (),
+) -> list[str]:
     from mcp import ClientSession, stdio_client
 
-    params = server_params(fake_endpoint, trace)
+    params = server_params(fake_endpoint, trace, extra)
     outcomes: list[str] = []
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
@@ -346,3 +351,51 @@ def test_failed_acting_calls_are_recorded_with_their_error(fake_endpoint, tmp_pa
     ]
     assert actions and actions[0]["tool"] == "goto"
     assert "http" in actions[0]["result"]["error"]
+
+
+def test_emulate_throttles_cpu_and_network_over_mcp(fake_endpoint, tmp_path):
+    """The throttling Session.emulate supports must be reachable from an MCP client."""
+    outcomes = run_in_thread(
+        drive(
+            fake_endpoint,
+            tmp_path / "session.trace.jsonl",
+            [
+                ("goto", {"url": fixture_url("loop-app.html")}),
+                ("emulate", {"cpu_throttle": 4, "network_conditions": "Slow 3G"}),
+            ],
+        )
+    )
+    applied = json.loads(outcomes[2])
+    assert applied["cpu_throttle"] == 4
+    assert applied["network"]["preset"] == "Slow 3G"
+
+
+def test_mcp_server_drives_firefox_when_asked(fake_endpoint, tmp_path):
+    """`jevnav mcp --browser firefox` runs Firefox, and CDP-only tools say why they refuse."""
+    outcomes = run_in_thread(
+        drive(
+            fake_endpoint,
+            tmp_path / "session.trace.jsonl",
+            [
+                ("goto", {"url": fixture_url("loop-app.html")}),
+                ("read_js", {"expression": "navigator.userAgent"}),
+                ("perf_metrics", {}),
+            ],
+            extra=("--browser", "firefox"),
+        )
+    )
+    if "Executable doesn't exist" in outcomes[1] or "is not found" in outcomes[1]:
+        pytest.skip("firefox is not installed (playwright install firefox)")
+    assert json.loads(outcomes[1])["url"].endswith("loop-app.html")
+    assert "Firefox" in outcomes[2]
+    assert "--browser chromium" in outcomes[3]
+
+
+def test_a_refused_call_tells_the_client_why(fake_endpoint, tmp_path):
+    """MCP SDK 2.x hides an exception's text unless it is a ToolError: the reason
+    (here: only http(s) may be opened) is what the agent needs to recover."""
+    outcomes = run_in_thread(
+        drive(fake_endpoint, tmp_path / "session.trace.jsonl", [("goto", {"url": "ftp://x"})])
+    )
+    assert "http" in outcomes[1]
+    assert "ftp://x" in outcomes[1]

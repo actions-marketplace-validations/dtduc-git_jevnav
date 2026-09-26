@@ -335,6 +335,50 @@ def test_heap_snapshot_writes_a_file(page, tmp_path):
     session.close()
 
 
+def test_cdp_tools_refuse_a_non_chromium_engine(page, tmp_path):
+    """perf, heap and throttling need CDP: a firefox/webkit server says so up front."""
+    session = make_session(page, tmp_path, engine="firefox")
+    page.set_content("<p>x</p>")
+    with pytest.raises(RuntimeError, match="--browser chromium"):
+        session.perf_metrics()
+    target = tmp_path / "h.heapsnapshot"
+    with pytest.raises(RuntimeError, match="--browser chromium"):
+        session.heap_snapshot(str(target))
+    assert not target.exists()
+    with pytest.raises(RuntimeError, match="--browser chromium"):
+        session.emulate(color_scheme="dark", cpu_throttle=4)
+    with pytest.raises(RuntimeError, match="--browser chromium"):
+        session.emulate(network_conditions="Slow 3G")
+    # refused before anything was applied: nothing is left half-emulated
+    assert page.evaluate("matchMedia('(prefers-color-scheme: dark)').matches") is False
+    assert session.emulate(color_scheme="dark") is not None  # non-CDP emulation still works
+    assert page.evaluate("matchMedia('(prefers-color-scheme: dark)').matches") is True
+    session.close()
+
+
+def test_the_mcp_session_can_drive_firefox(tmp_path):
+    """--browser reaches the server's own lazily started browser, not only the CLI."""
+    session = Session(
+        start=None,
+        trace=str(tmp_path / "s.trace.jsonl"),
+        client=FakeJev({}).client(),
+        engine="firefox",
+        allow_file_urls=True,
+        file_root=tmp_path,
+    )
+    try:
+        try:
+            state = session.goto(fixture_url("app.html"))
+        except Exception as error:  # playwright raises when the browser is missing
+            if "Executable doesn't exist" in str(error) or "is not found" in str(error):
+                pytest.skip("firefox is not installed (playwright install firefox)")
+            raise
+        assert state["elements"] > 0
+        assert "Firefox" in session.read_js("navigator.userAgent")
+    finally:
+        session.close()
+
+
 def test_lighthouse_scores_when_npx_is_available(page, tmp_path):
     import shutil
     import threading
@@ -423,6 +467,158 @@ def test_cpu_and_network_throttling_are_applied(page, tmp_path):
     with pytest.raises(ValueError, match="unknown network preset"):
         session.emulate(network_conditions="Dial-up")
     session.close()
+
+
+BUSY_LOOP = (
+    "() => { const t = performance.now(); let x = 0;"
+    " for (let i = 0; i < 2e7; i++) x += i % 7; return performance.now() - t; }"
+)
+
+
+def test_cpu_throttling_holds_until_it_is_switched_off(page, tmp_path):
+    """The CDP session that applies throttling must stay attached: detaching it
+    resets the rate, which once made emulate(cpu_throttle=...) a silent no-op."""
+    session = make_session(page, tmp_path)
+    page.set_content("<p>x</p>")
+    base = min(page.evaluate(BUSY_LOOP) for _ in range(3))
+    session.emulate(cpu_throttle=6)
+    slowed = min(page.evaluate(BUSY_LOOP) for _ in range(2))
+    assert slowed > 2.5 * base, (base, slowed)
+    session.emulate(cpu_throttle=1)
+    restored = min(page.evaluate(BUSY_LOOP) for _ in range(3))
+    assert restored < 2 * base, (base, restored)
+    session.close()
+
+
+def test_network_throttling_holds_until_it_is_switched_off(page, tmp_path):
+    import threading
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    (tmp_path / "blob.bin").write_bytes(b"0" * 100_000)
+    (tmp_path / "index.html").write_text("<p>x</p>")
+
+    class Quiet(SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Quiet, directory=str(tmp_path)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    fetch = (
+        "async (u) => { const t = performance.now(); const r = await fetch(u, "
+        "{cache: 'no-store'}); await r.arrayBuffer(); return performance.now() - t; }"
+    )
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        page.goto(base_url + "/index.html")
+        session = make_session(page, tmp_path)
+        applied = session.emulate(network_conditions="Slow 3G")
+        assert applied["network"]["preset"] == "Slow 3G"
+        # 100 KB at 400 kbit/s is ~2 s, plus 400 ms of latency
+        assert page.evaluate(fetch, base_url + "/blob.bin") > 1000
+        off = session.emulate(network_conditions="No throttling")
+        assert off["network"]["preset"] == "No throttling"
+        assert page.evaluate(fetch, base_url + "/blob.bin") < 500
+        session.close()
+    finally:
+        server.shutdown()
+
+
+def test_offline_still_works_on_a_throttled_tab(page, tmp_path):
+    """A throttled tab holds its own CDP network override, which wins over the
+    context's offline switch: emulate must keep the two in agreement."""
+    import threading
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    (tmp_path / "index.html").write_text("<p>x</p>")
+
+    class Quiet(SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Quiet, directory=str(tmp_path)))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    reachable = (
+        "async (u) => { try { await fetch(u, {cache: 'no-store'}); return true; }"
+        " catch (e) { return false; } }"
+    )
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/index.html"
+        page.goto(url)
+        session = make_session(page, tmp_path)
+        session.emulate(network_conditions="Fast 4G")
+        session.emulate(offline=True)
+        assert page.evaluate(reachable, url) is False
+        session.emulate(offline=False)
+        assert page.evaluate(reachable, url) is True
+        session.emulate(network_conditions="Fast 4G", offline=True)
+        assert page.evaluate(reachable, url) is False
+        session.emulate(offline=False)
+        assert page.evaluate(reachable, url) is True
+        session.close()
+    finally:
+        server.shutdown()
+
+
+def test_explicit_network_values_apply_on_their_own(page, tmp_path):
+    """latency_ms or upload_kbps alone is a request, not "nothing asked for"."""
+    session = make_session(page, tmp_path)
+    page.set_content("<p>x</p>")
+    latency = session.emulate(latency_ms=300)["network"]
+    assert latency == {
+        "latency_ms": 300,
+        "download_kbps": -1,
+        "upload_kbps": -1,
+        "preset": None,
+    }
+    upload = session.emulate(upload_kbps=100)["network"]
+    assert (upload["download_kbps"], upload["upload_kbps"]) == (-1, 100)
+    download = session.emulate(download_kbps=800)["network"]
+    assert (download["download_kbps"], download["upload_kbps"]) == (800, 800)
+    session.close()
+
+
+def test_closing_the_current_last_tab_keeps_driving_another(tmp_path):
+    """new_page then close_page(1) used to leave the session on the closed tab."""
+    session = Session(
+        start=None, trace=str(tmp_path / "s.trace.jsonl"), client=FakeJev({}).client()
+    )
+    try:
+        session.new_page()  # the new tab (index 1) becomes current
+        out = session.close_page(1)
+        assert [tab["current"] for tab in out["pages"]] == [True]
+        assert "url" in session.page_state()  # the session still has a live page
+        with pytest.raises(ValueError, match="only tab"):
+            session.close_page(0)
+        with pytest.raises(ValueError, match="no tab at index 5"):
+            session.select_page(5)
+        with pytest.raises(ValueError, match="no tab at index 5"):
+            session.close_page(5)
+    finally:
+        session.close()
+
+
+def test_an_unknown_network_preset_is_refused_even_with_explicit_values(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(ValueError, match="unknown network preset 'slow 3g'"):
+        session.emulate(network_conditions="slow 3g", latency_ms=100)
+    session.close()
+
+
+def test_tab_tools_launch_the_browser_on_a_first_call(tmp_path):
+    """new_page as the very first call used to claim "not an injected page"."""
+    session = Session(
+        start=None, trace=str(tmp_path / "s.trace.jsonl"), client=FakeJev({}).client()
+    )
+    try:
+        out = session.new_page()
+        assert session.browser is not None
+        assert len(out["pages"]) == 2
+        assert session.select_page(0)["pages"][0]["current"] is True
+        assert len(session.close_page(1)["pages"]) == 1
+    finally:
+        session.close()
 
 
 def test_network_detail_returns_headers_and_body(page, tmp_path):
