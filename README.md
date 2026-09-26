@@ -11,6 +11,8 @@
 [![Marketplace](https://img.shields.io/badge/Marketplace-jevnav%20replay-2EA44F?logo=github)](https://github.com/marketplace/actions/jevnav-replay)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+https://github.com/user-attachments/assets/502550ec-77d4-439e-b334-fe7007f946b9
+
 jevnav is a browser layer for agents and tests. It reads a page as **facts**
 (structure, computed styles, the controls on screen), lets
 [Jev](https://docs.typesafe.ai/models) — TypeSafe's model for structured
