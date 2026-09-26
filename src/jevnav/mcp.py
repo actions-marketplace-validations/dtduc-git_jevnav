@@ -725,9 +725,18 @@ class Session:
                 )
             if geolocation is not None:
                 latitude, _, longitude = geolocation.partition(",")
-                page.context.set_geolocation(
-                    {"latitude": float(latitude), "longitude": float(longitude)}
-                )
+                coordinates = {"latitude": float(latitude), "longitude": float(longitude)}
+                # without the grant the page's navigator.geolocation fails, so the
+                # emulated position would be unreadable; scope it to this page's
+                # origin rather than every site in the context
+                parts = urllib.parse.urlsplit(page.url)
+                if parts.scheme in ("http", "https"):
+                    # scoped to this origin, never context-wide: with --cdp or
+                    # --user-data-dir the context is the user's real browser
+                    page.context.grant_permissions(
+                        ["geolocation"], origin=f"{parts.scheme}://{parts.netloc}"
+                    )
+                page.context.set_geolocation(coordinates)
                 applied["geolocation"] = geolocation
             if offline is not None:
                 page.context.set_offline(offline)
@@ -824,6 +833,7 @@ class Session:
         metrics = self.on_page(collect)
         interesting = (
             "Timestamp",
+            "Nodes",
             "Documents",
             "Frames",
             "JSEventListeners",
@@ -1338,9 +1348,14 @@ def serve(
     def upload_files(
         paths: list[str], selector: str | None = None, intent: str | None = None
     ) -> str:
-        """Set files on a file input, chosen by selector or by an intent Jev
-        resolves. Replaces the input's current selection; every path must exist
-        on the machine running the server."""
+        """Set files on a file input, chosen by a CSS selector or by an intent
+        Jev resolves. With an intent and several file inputs, the choice goes
+        through the gate first. Every path must exist and sit inside
+        --file-root (default: the working directory; set it explicitly if the
+        server runs from / or $HOME); the call replaces the input's current
+        selection. Returns
+        {files, status, reason, target, executed} — status "review" or
+        "blocked" means nothing was set."""
         return json.dumps(
             session.upload_files(paths, selector=selector, intent=intent), ensure_ascii=False
         )
@@ -1415,9 +1430,13 @@ def serve(
         geolocation: str | None = None,
         offline: bool | None = None,
     ) -> str:
-        """Emulate media, geolocation ("lat,lon") and connectivity. Overrides
-        persist for the session and apply to later page loads; fields you omit
-        are left as they are."""
+        """Emulate media, geolocation ("lat,lon") and connectivity. Media
+        overrides (color scheme, reduced motion, forced colors) apply to the
+        current tab; geolocation and offline apply to the whole browser context,
+        so later tabs and loads keep them. Fields you omit are left unchanged.
+        The position persists context-wide, but only an http(s) origin that
+        called emulate can read it (that origin gets the geolocation
+        permission); call emulate again after navigating elsewhere."""
         return json.dumps(
             session.emulate(
                 color_scheme=color_scheme,
@@ -1457,16 +1476,23 @@ def serve(
 
     @mcp.tool(annotations=reads())
     def perf_metrics() -> str:
-        """Chromium performance counters for the current page (CDP)."""
+        """Chromium performance counters for the current page, read over CDP:
+        DOM nodes, JS heap size, layout and task durations. Cheap telemetry
+        for spotting growth between actions; for real profiling use
+        chrome-devtools. Reads the page, changes nothing, chromium only."""
         return json.dumps(session.perf_metrics(), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(destructive=True))
     @traced("heap_snapshot")
     def heap_snapshot(path: str | None = None) -> str:
-        """Write a Chromium heap snapshot to a file (default:
-        jevnav-heap-<timestamp>.heapsnapshot in the working directory). Chromium
-        only; the file can be large and is a debug artifact, not part of a
-        trace."""
+        """Write a Chromium heap snapshot of the current page to a file (default:
+        jevnav-heap-<timestamp>.heapsnapshot under --file-root, which defaults
+        to the working directory and must be set explicitly if the server runs
+        from / or $HOME; the path must stay inside it), for Chrome DevTools >
+        Memory. A snapshot is a full JS heap dump, often
+        hundreds of MB; an existing file at the same path is overwritten. Use it
+        to chase a memory leak, not for routine inspection — it changes nothing
+        on the page, and it is chromium-only."""
         return json.dumps(session.heap_snapshot(path), ensure_ascii=False)
 
     @mcp.tool(annotations=acts(idempotent=True))
@@ -1488,7 +1514,14 @@ def serve(
     @mcp.tool(annotations=acts(destructive=True))
     @traced("trace_stop")
     def trace_stop(path: str | None = None) -> str:
-        """Stop tracing and write the trace zip."""
+        """Stop the Playwright trace started by trace_start and write the zip to
+        path (default: jevnav-trace-<timestamp>.zip under --file-root, which
+        defaults to the working directory and must be set explicitly if the
+        server runs from / or $HOME; the path must stay inside it).
+        The zip holds snapshots and, if enabled, screenshots of everything since
+        trace_start — open it with `npx playwright show-trace <path>`. Stopping
+        without a started trace is an error; passing the same path again
+        overwrites that zip. Chromium, Firefox and WebKit all support it."""
         return json.dumps(session.trace_stop(path), ensure_ascii=False)
 
     @mcp.tool(annotations=reads(open_world=False))
