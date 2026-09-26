@@ -6,8 +6,8 @@ answer have run unattended?
 
 ## Method
 
-- **Cases**: `benchmarks/element-selection/cases.json` — 30 hand-written cases
-  across 8 real public sites (Hacker News front/newest, Wikipedia main page and
+- **Cases**: `benchmarks/element-selection/cases.json` — 71 hand-written cases
+  across 9 real public sites (Hacker News front/newest, Wikipedia main page and
   an article, PyPI home and a project page, MDN, python.org, docs.python.org,
   GitHub, example.com, crates.io). Each case is one intent plus the element it
   should select.
