@@ -257,7 +257,26 @@ def test_resize_and_emulate(page, tmp_path):
     assert page.evaluate("innerWidth") == 800
     session.emulate(color_scheme="dark")
     assert page.evaluate("matchMedia('(prefers-color-scheme: dark)').matches") is True
-    assert session.emulate(geolocation="10.5,106.5")["geolocation"] == "10.5,106.5"
+    # geolocation needs a secure context, so read it from a localhost page
+    import threading
+    from functools import partial
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        partial(SimpleHTTPRequestHandler, directory=str(Path(__file__).parent / "fixtures")),
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        page.goto(f"http://127.0.0.1:{server.server_port}/loop-app.html")
+        assert session.emulate(geolocation="10.5,106.5")["geolocation"] == "10.5,106.5"
+        coords = page.evaluate(
+            "() => new Promise((resolve) => navigator.geolocation.getCurrentPosition("
+            "(p) => resolve([p.coords.latitude, p.coords.longitude]), () => resolve(null)))"
+        )
+        assert coords == [10.5, 106.5]
+    finally:
+        server.shutdown()
     session.close()
 
 
@@ -300,6 +319,7 @@ def test_perf_metrics_returns_chromium_counters(page, tmp_path):
     session = make_session(page, tmp_path)
     page.goto(fixture_url("loop-app.html"))
     metrics = session.perf_metrics()["metrics"]
+    assert metrics["Nodes"] > 0
     assert "JSHeapUsedSize" in metrics
     assert metrics["TaskDuration"] >= 0
     session.close()
@@ -660,3 +680,10 @@ def test_replay_execute_handles_an_intent_resolve_step(page, tmp_path):
     result = replay_trace(str(tmp_path / "s.trace.jsonl"), page=page, execute=True)
     assert result["failed"] == []
     assert result["counts"].get("error", 0) == 0
+
+
+def test_trace_stop_without_start_is_an_error(page, tmp_path):
+    session = make_session(page, tmp_path)
+    with pytest.raises(Exception, match="start tracing"):
+        session.trace_stop()
+    session.close()
